@@ -1739,7 +1739,7 @@ These models are needed by Plan 2 (Agent core) and Plan 4 (Memory system). We cr
 - Create: `student-planner/app/models/conversation_message.py`
 - Modify: `student-planner/app/models/__init__.py`
 
-- [ ] **Step 1: Write AgentLog model**
+- [x] **Step 1: Write AgentLog model**
 
 ```python
 # app/models/agent_log.py
@@ -1770,7 +1770,7 @@ class AgentLog(Base):
     )
 ```
 
-- [ ] **Step 2: Write Memory model**
+- [x] **Step 2: Write Memory model**
 
 ```python
 # app/models/memory.py
@@ -1801,7 +1801,7 @@ class Memory(Base):
     relevance_score: Mapped[float] = mapped_column(Float, default=1.0)
 ```
 
-- [ ] **Step 3: Write SessionSummary and ConversationMessage models**
+- [x] **Step 3: Write SessionSummary and ConversationMessage models**
 
 ```python
 # app/models/session_summary.py
@@ -1853,7 +1853,7 @@ class ConversationMessage(Base):
     )
 ```
 
-- [ ] **Step 4: Update models/__init__.py**
+- [x] **Step 4: Update models/__init__.py**
 
 ```python
 # app/models/__init__.py
@@ -1873,12 +1873,12 @@ __all__ = [
 ]
 ```
 
-- [ ] **Step 5: Verify all models can be imported and tables created**
+- [x] **Step 5: Verify all models can be imported and tables created**
 
 Run: `cd student-planner && python -c "from app.models import *; print('All models OK')"`
 Expected: `All models OK`
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add -A
