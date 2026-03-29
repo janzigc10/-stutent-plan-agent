@@ -1423,7 +1423,7 @@ Connects the agent loop to the frontend via WebSocket.
 - Modify: `student-planner/app/main.py`
 - Create: `student-planner/tests/test_chat_ws.py`
 
-- [ ] **Step 1: Write WebSocket chat endpoint**
+- [x] **Step 1: Write WebSocket chat endpoint**
 
 ```python
 # app/routers/chat.py
@@ -1511,7 +1511,7 @@ async def chat_websocket(websocket: WebSocket):
         pass
 ```
 
-- [ ] **Step 2: Mount chat router in main.py**
+- [x] **Step 2: Mount chat router in main.py**
 
 Add to `app/main.py` `create_app()`:
 ```python
@@ -1520,7 +1520,7 @@ from app.routers import auth, courses, exams, tasks, reminders, chat
 app.include_router(chat.router)
 ```
 
-- [ ] **Step 3: Write WebSocket test**
+- [x] **Step 3: Write WebSocket test**
 
 ```python
 # tests/test_chat_ws.py
@@ -1550,12 +1550,12 @@ async def test_ws_auth_required(client: AsyncClient):
     assert "/ws/chat" in routes
 ```
 
-- [ ] **Step 4: Run all tests**
+- [x] **Step 4: Run all tests**
 
 Run: `cd student-planner && pytest -v`
 Expected: All tests PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add -A
