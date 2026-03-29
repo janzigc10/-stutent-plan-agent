@@ -46,7 +46,7 @@ student-planner/
 - Modify: `student-planner/app/config.py`
 - Create: `student-planner/tests/test_llm_client.py`
 
-- [ ] **Step 1: Add LLM config fields**
+- [x] **Step 1: Add LLM config fields**
 
 Add to `app/config.py` Settings class:
 ```python
@@ -58,7 +58,7 @@ Add to `app/config.py` Settings class:
     llm_temperature: float = 0.3
 ```
 
-- [ ] **Step 2: Write LLM client**
+- [x] **Step 2: Write LLM client**
 
 ```python
 # app/agent/llm_client.py
@@ -115,7 +115,7 @@ async def chat_completion(
     return result
 ```
 
-- [ ] **Step 3: Write test (mocked LLM)**
+- [x] **Step 3: Write test (mocked LLM)**
 
 ```python
 # tests/test_llm_client.py
@@ -177,12 +177,12 @@ async def test_chat_completion_tool_call():
     assert result["tool_calls"][0]["function"]["name"] == "list_courses"
 ```
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `cd student-planner && pip install openai && pytest tests/test_llm_client.py -v`
 Expected: All 2 tests PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add -A
