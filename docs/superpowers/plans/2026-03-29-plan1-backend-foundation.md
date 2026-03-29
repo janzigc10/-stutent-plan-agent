@@ -513,7 +513,7 @@ async def test_me_no_token(client: AsyncClient):
 Run: `cd student-planner && pytest tests/test_auth.py -v`
 Expected: All 6 tests PASS
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```bash
 git add -A
@@ -532,7 +532,7 @@ git commit -m "feat: user model, JWT auth, register/login endpoints with tests"
 - Modify: `student-planner/app/main.py`
 - Create: `student-planner/tests/test_courses.py`
 
-- [ ] **Step 1: Write Course model**
+- [x] **Step 1: Write Course model**
 
 ```python
 # app/models/course.py
@@ -560,7 +560,7 @@ class Course(Base):
     week_end: Mapped[int] = mapped_column(Integer, default=16)
 ```
 
-- [ ] **Step 2: Write Course schemas**
+- [x] **Step 2: Write Course schemas**
 
 ```python
 # app/schemas/course.py
@@ -606,7 +606,7 @@ class CourseOut(BaseModel):
     model_config = {"from_attributes": True}
 ```
 
-- [ ] **Step 3: Write courses router**
+- [x] **Step 3: Write courses router**
 
 ```python
 # app/routers/courses.py
@@ -696,7 +696,7 @@ async def delete_course(
     await db.commit()
 ```
 
-- [ ] **Step 4: Update models/__init__.py and main.py**
+- [x] **Step 4: Update models/__init__.py and main.py**
 
 ```python
 # app/models/__init__.py
@@ -713,7 +713,7 @@ from app.routers import auth, courses
 app.include_router(courses.router, prefix="/api")
 ```
 
-- [ ] **Step 5: Write course tests**
+- [x] **Step 5: Write course tests**
 
 ```python
 # tests/test_courses.py
@@ -778,12 +778,12 @@ async def test_course_not_found(auth_client: AsyncClient):
     assert resp.status_code == 404
 ```
 
-- [ ] **Step 6: Run tests**
+- [x] **Step 6: Run tests**
 
 Run: `cd student-planner && pytest tests/test_courses.py -v`
 Expected: All 5 tests PASS
 
-- [x] **Step 7: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add -A
@@ -915,7 +915,7 @@ async def delete_exam(
     await db.commit()
 ```
 
-- [ ] **Step 4: Update models/__init__.py and main.py**
+- [x] **Step 4: Update models/__init__.py and main.py**
 
 ```python
 # app/models/__init__.py
@@ -968,12 +968,12 @@ async def test_delete_exam(auth_client: AsyncClient):
     assert resp.status_code == 204
 ```
 
-- [ ] **Step 6: Run tests**
+- [x] **Step 6: Run tests**
 
 Run: `cd student-planner && pytest tests/test_exams.py -v`
 Expected: All 3 tests PASS
 
-- [x] **Step 7: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add -A
@@ -1176,7 +1176,7 @@ async def delete_task(
     await db.commit()
 ```
 
-- [ ] **Step 4: Update models/__init__.py and main.py**
+- [x] **Step 4: Update models/__init__.py and main.py**
 
 ```python
 # app/models/__init__.py
@@ -1290,12 +1290,12 @@ async def test_update_task_conflict(auth_client: AsyncClient):
     assert resp.status_code == 409
 ```
 
-- [ ] **Step 6: Run tests**
+- [x] **Step 6: Run tests**
 
 Run: `cd student-planner && pytest tests/test_tasks.py -v`
 Expected: All 6 tests PASS
 
-- [x] **Step 7: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add -A
@@ -1421,7 +1421,7 @@ async def delete_reminder(
     await db.commit()
 ```
 
-- [ ] **Step 4: Update models/__init__.py and main.py**
+- [x] **Step 4: Update models/__init__.py and main.py**
 
 ```python
 # app/models/__init__.py
@@ -1487,12 +1487,12 @@ async def test_delete_reminder(auth_client: AsyncClient):
     assert resp.status_code == 204
 ```
 
-- [ ] **Step 6: Run tests**
+- [x] **Step 6: Run tests**
 
 Run: `cd student-planner && pytest tests/test_reminders.py -v`
 Expected: All 3 tests PASS
 
-- [x] **Step 7: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add -A
@@ -1966,7 +1966,7 @@ Expected: All tables created
 Run: `cd student-planner && pytest -v`
 Expected: All tests PASS (auth + courses + exams + tasks + reminders + calendar)
 
-- [x] **Step 7: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add -A
