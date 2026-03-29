@@ -1509,7 +1509,7 @@ This is the most critical service for the Agent. It computes free time slots by 
 - Create: `student-planner/app/services/calendar.py`
 - Create: `student-planner/tests/test_calendar.py`
 
-- [ ] **Step 1: Write failing tests for get_free_slots**
+- [x] **Step 1: Write failing tests for get_free_slots**
 
 ```python
 # tests/test_calendar.py
@@ -1613,12 +1613,12 @@ def test_lunch_break_excluded():
         assert not (slot.start < "13:30" and slot.end > "12:00")
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cd student-planner && pytest tests/test_calendar.py -v`
 Expected: FAIL — `ImportError: cannot import name 'compute_free_slots'`
 
-- [ ] **Step 3: Implement calendar service**
+- [x] **Step 3: Implement calendar service**
 
 ```python
 # app/services/calendar.py
@@ -1714,12 +1714,12 @@ def compute_free_slots(
     return free
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `cd student-planner && pytest tests/test_calendar.py -v`
 Expected: All 6 tests PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add -A
