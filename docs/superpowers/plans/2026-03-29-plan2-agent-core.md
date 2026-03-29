@@ -918,7 +918,7 @@ git commit -m "feat: dynamic context builder for system prompt"
 - Create: `student-planner/Agent.md`
 - Create: `student-planner/app/agent/prompt.py`
 
-- [ ] **Step 1: Write Agent.md**
+- [x] **Step 1: Write Agent.md**
 
 ```markdown
 # Agent.md — 学生时间规划助手
@@ -987,7 +987,7 @@ git commit -m "feat: dynamic context builder for system prompt"
 解析后必须用 YYYY-MM-DD 格式传给工具。
 ```
 
-- [ ] **Step 2: Write prompt assembly**
+- [x] **Step 2: Write prompt assembly**
 
 ```python
 # app/agent/prompt.py
@@ -1013,7 +1013,7 @@ async def build_system_prompt(user: User, db: AsyncSession) -> str:
     return f"{agent_md}\n\n---\n\n## 当前上下文\n\n{dynamic_ctx}"
 ```
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add -A
