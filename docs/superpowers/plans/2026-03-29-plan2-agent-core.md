@@ -196,7 +196,7 @@ git commit -m "feat: OpenAI-compatible LLM client with provider switching"
 **Files:**
 - Create: `student-planner/app/agent/tools.py`
 
-- [ ] **Step 1: Write tool definitions**
+- [x] **Step 1: Write tool definitions**
 
 These are the JSON schemas that tell the LLM what tools are available and how to call them.
 
@@ -394,7 +394,7 @@ TOOL_DEFINITIONS: list[dict] = [
 ]
 ```
 
-- [ ] **Step 2: Verify tool definitions are valid JSON schema**
+- [x] **Step 2: Verify tool definitions are valid JSON schema**
 
 ```python
 # Quick validation — run as script
@@ -435,12 +435,12 @@ def test_expected_tools_present():
     assert expected.issubset(names)
 ```
 
-- [ ] **Step 3: Run tests**
+- [x] **Step 3: Run tests**
 
 Run: `cd student-planner && pytest tests/test_tools_schema.py -v`
 Expected: All 3 tests PASS
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add -A
