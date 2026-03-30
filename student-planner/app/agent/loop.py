@@ -18,7 +18,7 @@ from app.agent.tools import TOOL_DEFINITIONS
 from app.models.agent_log import AgentLog
 from app.models.conversation_message import ConversationMessage
 from app.models.user import User
-from app.services.context_compressor import compress_tool_result
+from app.services.context_compressor import compress_conversation_history, compress_tool_result
 
 KNOWN_TOOLS = {tool["function"]["name"] for tool in TOOL_DEFINITIONS}
 MAX_ITERATIONS = 20
@@ -101,7 +101,7 @@ async def run_agent_loop(
                 result = await execute_tool(tool_name, tool_args, db, user.id)
                 user_response = yield {"type": "ask_user", **result}
                 if user_response is None:
-                    user_response = "确认"
+                    user_response = "纭"
                 tool_result_content = json.dumps({"user_response": user_response}, ensure_ascii=False)
             else:
                 result = await execute_tool(tool_name, tool_args, db, user.id)

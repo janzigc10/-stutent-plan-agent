@@ -1,8 +1,11 @@
-"""Compress tool results to save context window space."""
+"""Compression helpers for tool results and long conversation histories."""
 
 import json
 
+from app.agent.llm_client import chat_completion
+
 _SMALL_THRESHOLD = 300
+_SUMMARIZE_PROMPT = """请用 1 到 3 句话总结以下较早的对话内容，保留用户做了什么、确认了什么、表达了什么偏好。"""
 
 
 def compress_tool_result(tool_name: str, result: dict) -> str:
@@ -18,6 +21,46 @@ def compress_tool_result(tool_name: str, result: dict) -> str:
         return compressor(result)
 
     return raw
+
+
+async def compress_conversation_history(
+    messages: list[dict],
+    llm_client,
+    max_messages: int = 12,
+) -> list[dict]:
+    system_messages = [message for message in messages if message.get("role") == "system"]
+    conversation_messages = [message for message in messages if message.get("role") != "system"]
+
+    if len(conversation_messages) <= max_messages:
+        return messages
+
+    cutoff = len(conversation_messages) - max_messages
+    old_messages = conversation_messages[:cutoff]
+    recent_messages = conversation_messages[cutoff:]
+
+    old_text = "\n".join(
+        f"{message.get('role', 'unknown')}: {message.get('content', '')}"
+        for message in old_messages
+        if message.get("content")
+    )
+
+    try:
+        response = await chat_completion(
+            llm_client,
+            [
+                {"role": "system", "content": _SUMMARIZE_PROMPT},
+                {"role": "user", "content": old_text},
+            ],
+        )
+        summary = response.get("content") or "早期对话摘要不可用。"
+    except Exception:
+        summary = "早期对话摘要生成失败。"
+
+    summary_message = {
+        "role": "user",
+        "content": f"[之前的对话摘要] {summary}",
+    }
+    return system_messages + [summary_message] + recent_messages
 
 
 def _compress_get_free_slots(result: dict) -> str:
