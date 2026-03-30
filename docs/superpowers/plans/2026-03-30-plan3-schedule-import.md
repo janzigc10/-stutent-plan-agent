@@ -46,7 +46,7 @@ The simplest, most self-contained piece. No external dependencies. Other tasks d
 - Create: `student-planner/app/services/period_converter.py`
 - Create: `student-planner/tests/test_period_converter.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 # tests/test_period_converter.py
@@ -96,12 +96,12 @@ def test_convert_strips_whitespace():
     assert result == {"start_time": "10:00", "end_time": "11:40"}
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cd student-planner && python -m pytest tests/test_period_converter.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'app.services.period_converter'`
 
-- [ ] **Step 3: Implement period_converter.py**
+- [x] **Step 3: Implement period_converter.py**
 
 ```python
 # app/services/period_converter.py
@@ -133,12 +133,12 @@ def convert_periods(
     return {"start_time": times["start"], "end_time": times["end"]}
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `cd student-planner && python -m pytest tests/test_period_converter.py -v`
 Expected: All 7 tests PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd student-planner
@@ -158,7 +158,7 @@ Parses `.xlsx` files into a list of raw course dicts. Uses openpyxl. The parser 
 - Create: `student-planner/tests/fixtures/sample_schedule.xlsx`
 - Modify: `student-planner/pyproject.toml` (add openpyxl dependency)
 
-- [ ] **Step 1: Add openpyxl dependency**
+- [x] **Step 1: Add openpyxl dependency**
 
 In `pyproject.toml`, add `"openpyxl>=3.1.0"` to the `dependencies` list:
 
@@ -180,7 +180,7 @@ dependencies = [
 
 Then install: `cd student-planner && pip install -e '.[dev]'`
 
-- [ ] **Step 2: Create test fixture Excel file**
+- [x] **Step 2: Create test fixture Excel file**
 
 ```python
 # Run this once to generate the fixture (not a test file — a helper script)
@@ -223,7 +223,7 @@ wb.save("tests/fixtures/sample_schedule.xlsx")
 
 Run: `cd student-planner && mkdir -p tests/fixtures && python -c "<the script above>"`
 
-- [ ] **Step 3: Write the failing tests**
+- [x] **Step 3: Write the failing tests**
 
 ```python
 # tests/test_schedule_parser.py
@@ -302,12 +302,12 @@ def test_parse_total_course_count():
     assert len(courses) == 6
 ```
 
-- [ ] **Step 4: Run tests to verify they fail**
+- [x] **Step 4: Run tests to verify they fail**
 
 Run: `cd student-planner && python -m pytest tests/test_schedule_parser.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'app.services.schedule_parser'`
 
-- [ ] **Step 5: Implement schedule_parser.py**
+- [x] **Step 5: Implement schedule_parser.py**
 
 ```python
 # app/services/schedule_parser.py
@@ -434,12 +434,12 @@ def _parse_cell(text: str, weekday: int, period: str) -> list[RawCourse]:
     ]
 ```
 
-- [ ] **Step 6: Run tests to verify they pass**
+- [x] **Step 6: Run tests to verify they pass**
 
 Run: `cd student-planner && python -m pytest tests/test_schedule_parser.py -v`
 Expected: All 10 tests PASS
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 cd student-planner
@@ -458,7 +458,7 @@ Uses a multimodal LLM (Qwen-VL, DeepSeek-VL, etc.) to extract course data from p
 - Create: `student-planner/tests/test_schedule_ocr.py`
 - Modify: `student-planner/app/config.py` (add vision model config)
 
-- [ ] **Step 1: Add vision model config**
+- [x] **Step 1: Add vision model config**
 
 Add to `app/config.py` Settings class:
 
@@ -489,7 +489,7 @@ class Settings(BaseSettings):
     model_config = {"env_prefix": "SP_"}
 ```
 
-- [ ] **Step 2: Write the failing tests**
+- [x] **Step 2: Write the failing tests**
 
 ```python
 # tests/test_schedule_ocr.py
@@ -571,12 +571,12 @@ async def test_parse_image_handles_missing_weeks():
     assert courses[0].week_end == 16
 ```
 
-- [ ] **Step 3: Run tests to verify they fail**
+- [x] **Step 3: Run tests to verify they fail**
 
 Run: `cd student-planner && python -m pytest tests/test_schedule_ocr.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'app.agent.schedule_ocr'`
 
-- [ ] **Step 4: Implement schedule_ocr.py**
+- [x] **Step 4: Implement schedule_ocr.py**
 
 ```python
 # app/agent/schedule_ocr.py
@@ -701,12 +701,12 @@ def _parse_weeks(weeks_str: str | None) -> tuple[int, int]:
     return 1, 16
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 Run: `cd student-planner && python -m pytest tests/test_schedule_ocr.py -v`
 Expected: All 4 tests PASS
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 cd student-planner
@@ -725,7 +725,7 @@ A REST endpoint that accepts Excel or image files, parses them, and returns the 
 - Modify: `student-planner/app/main.py` (mount new router)
 - Create: `student-planner/tests/test_schedule_import_api.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 # tests/test_schedule_import_api.py
@@ -784,12 +784,12 @@ async def test_upload_requires_auth(client: AsyncClient):
     assert response.status_code == 403
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cd student-planner && python -m pytest tests/test_schedule_import_api.py -v`
 Expected: FAIL — 404 (route not registered)
 
-- [ ] **Step 3: Implement schedule_import router**
+- [x] **Step 3: Implement schedule_import router**
 
 ```python
 # app/routers/schedule_import.py
@@ -865,7 +865,7 @@ def _raw_course_to_dict(course: RawCourse) -> dict:
     }
 ```
 
-- [ ] **Step 4: Mount the router in main.py**
+- [x] **Step 4: Mount the router in main.py**
 
 In `app/main.py`, add the import and include_router:
 
@@ -890,12 +890,12 @@ def create_app() -> FastAPI:
     return app
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 Run: `cd student-planner && python -m pytest tests/test_schedule_import_api.py -v`
 Expected: All 4 tests PASS
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 cd student-planner
@@ -914,7 +914,7 @@ Register the two new tools in the agent tool system. These tools handle the full
 - Modify: `student-planner/app/agent/tool_executor.py` (add 2 handlers)
 - Create: `student-planner/tests/test_schedule_tools.py`
 
-- [ ] **Step 1: Add tool definitions to tools.py**
+- [x] **Step 1: Add tool definitions to tools.py**
 
 Append these two entries to the `TOOL_DEFINITIONS` list in `app/agent/tools.py`:
 
@@ -955,7 +955,7 @@ Append these two entries to the `TOOL_DEFINITIONS` list in `app/agent/tools.py`:
     },
 ```
 
-- [ ] **Step 2: Write the failing tests**
+- [x] **Step 2: Write the failing tests**
 
 ```python
 # tests/test_schedule_tools.py
@@ -984,17 +984,17 @@ def test_parse_schedule_image_requires_file_id():
     assert "file_id" in tool["function"]["parameters"]["required"]
 ```
 
-- [ ] **Step 3: Run tests to verify they fail**
+- [x] **Step 3: Run tests to verify they fail**
 
 Run: `cd student-planner && python -m pytest tests/test_schedule_tools.py -v`
 Expected: FAIL — `parse_schedule` not found in TOOL_DEFINITIONS
 
-- [ ] **Step 4: Run tests after adding definitions (Step 1)**
+- [x] **Step 4: Run tests after adding definitions (Step 1)**
 
 Run: `cd student-planner && python -m pytest tests/test_schedule_tools.py -v`
 Expected: All 4 tests PASS
 
-- [ ] **Step 5: Add handlers to tool_executor.py**
+- [x] **Step 5: Add handlers to tool_executor.py**
 
 Add these imports at the top of `app/agent/tool_executor.py`:
 
@@ -1057,12 +1057,12 @@ TOOL_HANDLERS = {
 }
 ```
 
-- [ ] **Step 6: Run all tool tests**
+- [x] **Step 6: Run all tool tests**
 
 Run: `cd student-planner && python -m pytest tests/test_schedule_tools.py tests/test_tool_executor.py tests/test_tools_schema.py -v`
 Expected: All PASS
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 cd student-planner
@@ -1081,7 +1081,7 @@ After the user confirms the parsed course list via ask_user, the agent needs to 
 - Modify: `student-planner/app/agent/tool_executor.py` (add handler)
 - Create: `student-planner/tests/test_bulk_import.py`
 
-- [ ] **Step 1: Add tool definition**
+- [x] **Step 1: Add tool definition**
 
 Append to `TOOL_DEFINITIONS` in `app/agent/tools.py`:
 
@@ -1119,7 +1119,7 @@ Append to `TOOL_DEFINITIONS` in `app/agent/tools.py`:
     },
 ```
 
-- [ ] **Step 2: Write the failing tests**
+- [x] **Step 2: Write the failing tests**
 
 ```python
 # tests/test_bulk_import.py
@@ -1210,12 +1210,12 @@ async def test_bulk_import_empty_list(setup_db):
         assert result["count"] == 0
 ```
 
-- [ ] **Step 3: Run tests to verify they fail**
+- [x] **Step 3: Run tests to verify they fail**
 
 Run: `cd student-planner && python -m pytest tests/test_bulk_import.py -v`
 Expected: FAIL — `bulk_import_courses` not in TOOL_HANDLERS
 
-- [ ] **Step 4: Implement the handler**
+- [x] **Step 4: Implement the handler**
 
 Add this handler function to `app/agent/tool_executor.py`:
 
@@ -1259,12 +1259,12 @@ TOOL_HANDLERS = {
 }
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 Run: `cd student-planner && python -m pytest tests/test_bulk_import.py -v`
 Expected: All 3 tests PASS
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 cd student-planner
@@ -1281,7 +1281,7 @@ Add behavior rules and a few-shot example for the schedule import flow to Agent.
 **Files:**
 - Modify: `student-planner/Agent.md`
 
-- [ ] **Step 1: Add schedule import tool usage rules**
+- [x] **Step 1: Add schedule import tool usage rules**
 
 Add the following under the `### 工具使用` section in `Agent.md`:
 
@@ -1292,7 +1292,7 @@ Add the following under the `### 工具使用` section in `Agent.md`:
 - 如果用户已经配置过作息时间表（存在 preferences.school_schedule 中），直接使用，不要重复追问
 ```
 
-- [ ] **Step 2: Add few-shot example for schedule import**
+- [x] **Step 2: Add few-shot example for schedule import**
 
 Add the following as `### 示例3：导入课表` after the existing examples in `Agent.md`:
 
@@ -1322,7 +1322,7 @@ Add the following as `### 示例3：导入课表` after the existing examples in
 - 导入前如果用户已有课程，提醒用户"你已有 M 门课，是要追加还是替换？"
 ```
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 cd student-planner
@@ -1339,7 +1339,7 @@ End-to-end test: upload Excel → parse → confirm → bulk import → verify c
 **Files:**
 - Create: `student-planner/tests/test_schedule_integration.py`
 
-- [ ] **Step 1: Write the integration test**
+- [x] **Step 1: Write the integration test**
 
 ```python
 # tests/test_schedule_integration.py
@@ -1435,17 +1435,17 @@ async def test_period_conversion_all_fixture_courses():
         assert ":" in times["end_time"]
 ```
 
-- [ ] **Step 2: Run the integration test**
+- [x] **Step 2: Run the integration test**
 
 Run: `cd student-planner && python -m pytest tests/test_schedule_integration.py -v`
 Expected: All 2 tests PASS
 
-- [ ] **Step 3: Run the full test suite**
+- [x] **Step 3: Run the full test suite**
 
 Run: `cd student-planner && python -m pytest -v`
 Expected: All tests PASS (existing + new)
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 cd student-planner

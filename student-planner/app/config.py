@@ -11,6 +11,10 @@ class Settings(BaseSettings):
     llm_model: str = "deepseek-chat"
     llm_max_tokens: int = 4096
     llm_temperature: float = 0.3
+    vision_llm_api_key: str = ""
+    vision_llm_base_url: str = ""
+    vision_llm_model: str = "qwen-vl-plus"
+    session_timeout_minutes: int = 120
 
     model_config = {"env_prefix": "SP_"}
 

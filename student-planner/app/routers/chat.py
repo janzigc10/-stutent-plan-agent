@@ -5,6 +5,7 @@ from sqlalchemy import select
 
 from app.agent.llm_client import create_llm_client
 from app.agent.loop import run_agent_loop
+from app.agent.session_lifecycle import end_session
 from app.auth.jwt import verify_token
 from app.database import get_db
 from app.models.user import User
@@ -47,7 +48,7 @@ async def chat_websocket(websocket: WebSocket) -> None:
             async for db in get_db():
                 result = await db.execute(select(User).where(User.id == user_id))
                 user = result.scalar_one_or_none()
-                if not user:
+                if user is None:
                     await websocket.send_json({"type": "error", "message": "User not found"})
                     break
 
@@ -67,4 +68,5 @@ async def chat_websocket(websocket: WebSocket) -> None:
                 except StopAsyncIteration:
                     pass
     except WebSocketDisconnect:
-        pass
+        async for db in get_db():
+            await end_session(db, user_id, session_id, llm_client)

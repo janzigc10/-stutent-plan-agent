@@ -1,44 +1,48 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.course import Course
+from app.models.session_summary import SessionSummary
 from app.models.task import Task
 from app.models.user import User
+from app.services.memory_service import get_hot_memories, get_warm_memories
 
 WEEKDAY_NAMES = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
 
 
 async def build_dynamic_context(user: User, db: AsyncSession) -> str:
     """Build the dynamic portion of the system prompt."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC).replace(tzinfo=None)
     today = now.date()
     weekday = today.isoweekday()
 
     parts: list[str] = []
     parts.append(f"当前时间：{now.strftime('%Y-%m-%d %H:%M')}（{WEEKDAY_NAMES[weekday - 1]}）")
+    parts.append(f"褰撳墠鏃堕棿：{now.strftime('%Y-%m-%d %H:%M')}（{WEEKDAY_NAMES[weekday - 1]}）")
 
     if user.current_semester_start:
         delta = (today - user.current_semester_start).days
         week_num = delta // 7 + 1
-        parts.append(f"当前学期：第{week_num}周")
+        parts.append(f"当前学期：第 {week_num} 周")
 
     course_result = await db.execute(
         select(Course)
         .where(Course.user_id == user.id, Course.weekday == weekday)
         .order_by(Course.start_time)
     )
-    courses = course_result.scalars().all()
+    courses = list(course_result.scalars().all())
 
     task_result = await db.execute(
         select(Task)
         .where(Task.user_id == user.id, Task.scheduled_date == today.isoformat())
         .order_by(Task.start_time)
     )
-    tasks = task_result.scalars().all()
+    tasks = list(task_result.scalars().all())
 
     parts.append("\n今天的日程：")
+    parts.append("浠婂ぉ鐨勬棩绋嬶細")
     if not courses and not tasks:
         parts.append("- 无安排")
     else:
@@ -46,7 +50,7 @@ async def build_dynamic_context(user: User, db: AsyncSession) -> str:
             location = f" @ {course.location}" if course.location else ""
             parts.append(f"- {course.start_time}-{course.end_time} {course.name}{location}（课程）")
         for task in tasks:
-            status_mark = "✓" if task.status == "completed" else "○"
+            status_mark = "已完成" if task.status == "completed" else task.status
             parts.append(f"- {task.start_time}-{task.end_time} {task.title}（{status_mark}）")
 
     preferences = user.preferences or {}
@@ -59,8 +63,35 @@ async def build_dynamic_context(user: User, db: AsyncSession) -> str:
         if "lunch_break" in preferences:
             parts.append(f"- 午休：{preferences['lunch_break']}")
         if "min_slot_minutes" in preferences:
-            parts.append(f"- 最短有效时段：{preferences['min_slot_minutes']}分钟")
+            parts.append(f"- 最短有效时段：{preferences['min_slot_minutes']} 分钟")
         if "school_schedule" in preferences:
             parts.append("- 已配置作息时间表")
+
+    hot_memories = await get_hot_memories(db, user.id)
+    if hot_memories:
+        parts.append("\n长期记忆（高频）：")
+        for memory in hot_memories:
+            parts.append(f"- [{memory.category}] {memory.content}")
+
+    warm_memories = await get_warm_memories(db, user.id, days=7)
+    if warm_memories:
+        parts.append("\n近期记忆：")
+        for memory in warm_memories:
+            parts.append(f"- [{memory.category}] {memory.content}")
+
+    summary_cutoff = now - timedelta(hours=24)
+    summary_result = await db.execute(
+        select(SessionSummary)
+        .where(
+            SessionSummary.user_id == user.id,
+            SessionSummary.created_at >= summary_cutoff,
+        )
+        .order_by(SessionSummary.created_at.desc())
+        .limit(1)
+    )
+    last_summary = summary_result.scalar_one_or_none()
+    if last_summary is not None:
+        parts.append("\n上次会话摘要：")
+        parts.append(last_summary.summary)
 
     return "\n".join(parts)

@@ -18,6 +18,7 @@ from app.agent.tools import TOOL_DEFINITIONS
 from app.models.agent_log import AgentLog
 from app.models.conversation_message import ConversationMessage
 from app.models.user import User
+from app.services.context_compressor import compress_conversation_history, compress_tool_result
 
 KNOWN_TOOLS = {tool["function"]["name"] for tool in TOOL_DEFINITIONS}
 MAX_ITERATIONS = 20
@@ -100,11 +101,11 @@ async def run_agent_loop(
                 result = await execute_tool(tool_name, tool_args, db, user.id)
                 user_response = yield {"type": "ask_user", **result}
                 if user_response is None:
-                    user_response = "确认"
+                    user_response = "纭"
                 tool_result_content = json.dumps({"user_response": user_response}, ensure_ascii=False)
             else:
                 result = await execute_tool(tool_name, tool_args, db, user.id)
-                tool_result_content = json.dumps(result, ensure_ascii=False)
+                tool_result_content = compress_tool_result(tool_name, result)
                 if "error" in result:
                     error_count[tool_name] = error_count.get(tool_name, 0) + 1
                 yield {"type": "tool_result", "name": tool_name, "result": result}
@@ -121,7 +122,7 @@ async def run_agent_loop(
             tool_history.append(tool_name)
             await _log_step(db, user.id, session_id, step, tool_name, tool_args, result)
 
-    yield {"type": "error", "message": "Agent loop 达到最大迭代次数"}
+    yield {"type": "error", "message": "Agent loop reached the maximum number of iterations."}
     yield {"type": "done"}
 
 
