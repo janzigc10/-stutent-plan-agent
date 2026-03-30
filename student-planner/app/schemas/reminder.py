@@ -13,6 +13,7 @@ class ReminderOut(BaseModel):
     target_type: str
     target_id: str
     remind_at: str
+    advance_minutes: int
     status: str
 
     model_config = {"from_attributes": True}

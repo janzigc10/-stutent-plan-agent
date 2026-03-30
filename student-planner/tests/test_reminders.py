@@ -14,6 +14,7 @@ async def test_create_reminder(auth_client: AsyncClient):
     )
     assert response.status_code == 201
     assert response.json()["status"] == "pending"
+    assert response.json()["advance_minutes"] == 15
 
 
 @pytest.mark.asyncio
@@ -25,6 +26,7 @@ async def test_list_reminders(auth_client: AsyncClient):
     response = await auth_client.get("/api/reminders/")
     assert response.status_code == 200
     assert len(response.json()) >= 1
+    assert response.json()[0]["advance_minutes"] == 15
 
 
 @pytest.mark.asyncio

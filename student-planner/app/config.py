@@ -15,6 +15,9 @@ class Settings(BaseSettings):
     vision_llm_base_url: str = ""
     vision_llm_model: str = "qwen-vl-plus"
     session_timeout_minutes: int = 120
+    vapid_private_key: str = ""
+    vapid_public_key: str = ""
+    vapid_claims_email: str = "mailto:admin@studentplanner.local"
 
     model_config = {"env_prefix": "SP_"}
 

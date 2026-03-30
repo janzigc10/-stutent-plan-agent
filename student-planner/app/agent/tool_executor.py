@@ -15,6 +15,11 @@ from app.services.memory_service import (
     delete_memory as delete_memory_record,
     recall_memories,
 )
+from app.services.reminder_scheduler import (
+    compute_next_course_occurrence,
+    resolve_fire_time,
+    schedule_reminder_job,
+)
 
 
 async def execute_tool(
@@ -262,7 +267,10 @@ async def _set_reminder(
         target = result.scalar_one_or_none()
         if target is None:
             return {"error": "Course not found"}
-        remind_at = f"course:{target_id}:-{advance_minutes}min"
+        event_time = compute_next_course_occurrence(
+            weekday=target.weekday,
+            start_time=target.start_time,
+        ).isoformat(timespec="seconds")
     else:
         result = await db.execute(
             select(Task).where(Task.id == target_id, Task.user_id == user_id)
@@ -270,18 +278,35 @@ async def _set_reminder(
         target = result.scalar_one_or_none()
         if target is None:
             return {"error": "Task not found"}
-        remind_at = f"{target.scheduled_date}T{target.start_time}:00"
+        event_time = f"{target.scheduled_date}T{target.start_time}:00"
+
+    fire_time = resolve_fire_time(event_time, advance_minutes=advance_minutes)
+    remind_at = fire_time.isoformat(timespec="seconds")
 
     reminder = Reminder(
         user_id=user_id,
         target_type=target_type,
         target_id=target_id,
         remind_at=remind_at,
+        advance_minutes=advance_minutes,
     )
     db.add(reminder)
     await db.commit()
     await db.refresh(reminder)
-    return {"id": reminder.id, "status": "reminder_set", "remind_at": remind_at}
+
+    schedule_reminder_job(
+        reminder_id=reminder.id,
+        fire_time=fire_time,
+        user_id=user_id,
+    )
+    return {
+        "id": reminder.id,
+        "status": "reminder_set",
+        "remind_at": remind_at,
+        "advance_minutes": advance_minutes,
+    }
+
+
 
 
 async def _list_reminders(db: AsyncSession, user_id: str, **kwargs) -> dict[str, Any]:
@@ -296,12 +321,15 @@ async def _list_reminders(db: AsyncSession, user_id: str, **kwargs) -> dict[str,
                 "target_type": reminder.target_type,
                 "target_id": reminder.target_id,
                 "remind_at": reminder.remind_at,
+                "advance_minutes": reminder.advance_minutes,
                 "status": reminder.status,
             }
             for reminder in reminders
         ],
         "count": len(reminders),
     }
+
+
 
 
 async def _ask_user(
@@ -353,6 +381,7 @@ async def _bulk_import_courses(
     **kwargs,
 ) -> dict[str, Any]:
     created: list[str] = []
+    reminders_created = 0
     for course_data in courses:
         course = Course(
             user_id=user_id,
@@ -366,14 +395,40 @@ async def _bulk_import_courses(
             week_end=course_data.get("week_end", 16),
         )
         db.add(course)
+        await db.flush()
+
+        event_time = compute_next_course_occurrence(
+            weekday=course.weekday,
+            start_time=course.start_time,
+        ).isoformat(timespec="seconds")
+        fire_time = resolve_fire_time(event_time, advance_minutes=15)
+        reminder = Reminder(
+            user_id=user_id,
+            target_type="course",
+            target_id=course.id,
+            remind_at=fire_time.isoformat(timespec="seconds"),
+            advance_minutes=15,
+        )
+        db.add(reminder)
+        await db.flush()
+
+        schedule_reminder_job(
+            reminder_id=reminder.id,
+            fire_time=fire_time,
+            user_id=user_id,
+        )
         created.append(course_data["name"])
+        reminders_created += 1
 
     await db.commit()
     return {
         "status": "imported",
         "count": len(created),
         "courses": created,
+        "reminders_created": reminders_created,
     }
+
+
 
 
 async def _recall_memory(

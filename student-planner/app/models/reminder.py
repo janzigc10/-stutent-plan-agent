@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import ForeignKey, String
+from sqlalchemy import ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -14,4 +14,5 @@ class Reminder(Base):
     target_type: Mapped[str] = mapped_column(String(20))
     target_id: Mapped[str] = mapped_column(String(36))
     remind_at: Mapped[str] = mapped_column(String(19))
+    advance_minutes: Mapped[int] = mapped_column(Integer, default=15)
     status: Mapped[str] = mapped_column(String(20), default="pending")
