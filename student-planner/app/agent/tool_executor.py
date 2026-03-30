@@ -6,9 +6,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.study_planner import generate_study_plan
 from app.models.course import Course
+from app.models.memory import Memory
 from app.models.reminder import Reminder
 from app.models.task import Task
 from app.services.calendar import TimeSlot, compute_free_slots
+from app.services.memory_service import (
+    create_memory,
+    delete_memory as delete_memory_record,
+    recall_memories,
+)
 
 
 async def execute_tool(
@@ -19,7 +25,7 @@ async def execute_tool(
 ) -> dict[str, Any]:
     """Dispatch a tool call to the appropriate handler."""
     handler = TOOL_HANDLERS.get(tool_name)
-    if not handler:
+    if handler is None:
         return {"error": f"Unknown tool: {tool_name}"}
 
     try:
@@ -30,7 +36,7 @@ async def execute_tool(
 
 async def _list_courses(db: AsyncSession, user_id: str, **kwargs) -> dict[str, Any]:
     result = await db.execute(select(Course).where(Course.user_id == user_id))
-    courses = result.scalars().all()
+    courses = list(result.scalars().all())
     return {
         "courses": [
             {
@@ -63,7 +69,7 @@ async def _delete_course(db: AsyncSession, user_id: str, course_id: str, **kwarg
         select(Course).where(Course.id == course_id, Course.user_id == user_id)
     )
     course = result.scalar_one_or_none()
-    if not course:
+    if course is None:
         return {"error": "Course not found"}
 
     await db.delete(course)
@@ -92,7 +98,7 @@ async def _get_free_slots(
         course_result = await db.execute(
             select(Course).where(Course.user_id == user_id, Course.weekday == weekday)
         )
-        courses = course_result.scalars().all()
+        courses = list(course_result.scalars().all())
 
         task_result = await db.execute(
             select(Task).where(
@@ -101,7 +107,7 @@ async def _get_free_slots(
                 Task.status != "skipped",
             )
         )
-        tasks = task_result.scalars().all()
+        tasks = list(task_result.scalars().all())
 
         occupied: list[TimeSlot] = []
         for course in courses:
@@ -168,6 +174,20 @@ async def _get_free_slots(
     }
 
 
+async def _create_study_plan(
+    db: AsyncSession,
+    user_id: str,
+    exams: list,
+    available_slots: dict,
+    strategy: str = "balanced",
+    **kwargs,
+) -> dict[str, Any]:
+    tasks = await generate_study_plan(exams, available_slots, strategy)
+    if not tasks:
+        return {"error": "Failed to generate study plan. Please try again."}
+    return {"tasks": tasks, "count": len(tasks)}
+
+
 async def _list_tasks(
     db: AsyncSession,
     user_id: str,
@@ -183,7 +203,7 @@ async def _list_tasks(
     query = query.order_by(Task.scheduled_date, Task.start_time)
 
     result = await db.execute(query)
-    tasks = result.scalars().all()
+    tasks = list(result.scalars().all())
     return {
         "tasks": [
             {
@@ -204,7 +224,7 @@ async def _list_tasks(
 async def _update_task(db: AsyncSession, user_id: str, task_id: str, **kwargs) -> dict[str, Any]:
     result = await db.execute(select(Task).where(Task.id == task_id, Task.user_id == user_id))
     task = result.scalar_one_or_none()
-    if not task:
+    if task is None:
         return {"error": "Task not found"}
 
     for key, value in kwargs.items():
@@ -219,7 +239,7 @@ async def _update_task(db: AsyncSession, user_id: str, task_id: str, **kwargs) -
 async def _complete_task(db: AsyncSession, user_id: str, task_id: str, **kwargs) -> dict[str, Any]:
     result = await db.execute(select(Task).where(Task.id == task_id, Task.user_id == user_id))
     task = result.scalar_one_or_none()
-    if not task:
+    if task is None:
         return {"error": "Task not found"}
 
     task.status = "completed"
@@ -240,7 +260,7 @@ async def _set_reminder(
             select(Course).where(Course.id == target_id, Course.user_id == user_id)
         )
         target = result.scalar_one_or_none()
-        if not target:
+        if target is None:
             return {"error": "Course not found"}
         remind_at = f"course:{target_id}:-{advance_minutes}min"
     else:
@@ -248,7 +268,7 @@ async def _set_reminder(
             select(Task).where(Task.id == target_id, Task.user_id == user_id)
         )
         target = result.scalar_one_or_none()
-        if not target:
+        if target is None:
             return {"error": "Task not found"}
         remind_at = f"{target.scheduled_date}T{target.start_time}:00"
 
@@ -268,7 +288,7 @@ async def _list_reminders(db: AsyncSession, user_id: str, **kwargs) -> dict[str,
     result = await db.execute(
         select(Reminder).where(Reminder.user_id == user_id).order_by(Reminder.remind_at)
     )
-    reminders = result.scalars().all()
+    reminders = list(result.scalars().all())
     return {
         "reminders": [
             {
@@ -299,20 +319,6 @@ async def _ask_user(
         "data": kwargs.get("data"),
     }
 
-async def _create_study_plan(
-    db: AsyncSession,
-    user_id: str,
-    exams: list,
-    available_slots: dict,
-    strategy: str = "balanced",
-    **kwargs,
-) -> dict[str, Any]:
-    tasks = await generate_study_plan(exams, available_slots, strategy)
-    if not tasks:
-        return {"error": "Failed to generate study plan. Please try again."}
-    return {"tasks": tasks, "count": len(tasks)}
-
-
 
 async def _parse_schedule(
     db: AsyncSession,
@@ -322,7 +328,7 @@ async def _parse_schedule(
 ) -> dict[str, Any]:
     return {
         "status": "ready",
-        "message": "课表已解析。请使用 ask_user 向用户展示识别结果并确认。",
+        "message": "课表已解析，请通过 ask_user 向用户展示识别结果并确认。",
         "file_id": file_id,
     }
 
@@ -335,7 +341,7 @@ async def _parse_schedule_image(
 ) -> dict[str, Any]:
     return {
         "status": "ready",
-        "message": "课表图片已识别。请使用 ask_user 向用户展示识别结果并确认。",
+        "message": "课表图片已识别，请通过 ask_user 向用户展示识别结果并确认。",
         "file_id": file_id,
     }
 
@@ -368,19 +374,77 @@ async def _bulk_import_courses(
         "count": len(created),
         "courses": created,
     }
+
+
+async def _recall_memory(
+    db: AsyncSession,
+    user_id: str,
+    query: str,
+    **kwargs,
+) -> dict[str, Any]:
+    memories = await recall_memories(db, user_id, query)
+    return {
+        "memories": [
+            {
+                "id": memory.id,
+                "category": memory.category,
+                "content": memory.content,
+                "created_at": memory.created_at.isoformat() if memory.created_at else None,
+            }
+            for memory in memories
+        ],
+        "count": len(memories),
+    }
+
+
+async def _save_memory(
+    db: AsyncSession,
+    user_id: str,
+    category: str,
+    content: str,
+    **kwargs,
+) -> dict[str, Any]:
+    memory = await create_memory(
+        db=db,
+        user_id=user_id,
+        category=category,
+        content=content,
+    )
+    return {
+        "status": "saved",
+        "id": memory.id,
+        "message": f"已保存记忆：{content}",
+    }
+
+
+async def _delete_memory_handler(
+    db: AsyncSession,
+    user_id: str,
+    memory_id: str,
+    **kwargs,
+) -> dict[str, Any]:
+    deleted = await delete_memory_record(db, user_id, memory_id)
+    if deleted:
+        return {"status": "deleted", "message": "已删除这条记忆。"}
+    return {"error": "Memory not found"}
+
+
 TOOL_HANDLERS = {
     "list_courses": _list_courses,
     "add_course": _add_course,
     "delete_course": _delete_course,
     "get_free_slots": _get_free_slots,
+    "create_study_plan": _create_study_plan,
     "list_tasks": _list_tasks,
     "update_task": _update_task,
     "complete_task": _complete_task,
     "set_reminder": _set_reminder,
     "list_reminders": _list_reminders,
     "ask_user": _ask_user,
-    "create_study_plan": _create_study_plan,
     "parse_schedule": _parse_schedule,
     "parse_schedule_image": _parse_schedule_image,
     "bulk_import_courses": _bulk_import_courses,
+    "recall_memory": _recall_memory,
+    "save_memory": _save_memory,
+    "delete_memory": _delete_memory_handler,
 }
