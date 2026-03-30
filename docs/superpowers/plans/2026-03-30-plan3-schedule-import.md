@@ -46,7 +46,7 @@ The simplest, most self-contained piece. No external dependencies. Other tasks d
 - Create: `student-planner/app/services/period_converter.py`
 - Create: `student-planner/tests/test_period_converter.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 # tests/test_period_converter.py
@@ -96,12 +96,12 @@ def test_convert_strips_whitespace():
     assert result == {"start_time": "10:00", "end_time": "11:40"}
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cd student-planner && python -m pytest tests/test_period_converter.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'app.services.period_converter'`
 
-- [ ] **Step 3: Implement period_converter.py**
+- [x] **Step 3: Implement period_converter.py**
 
 ```python
 # app/services/period_converter.py
@@ -133,7 +133,7 @@ def convert_periods(
     return {"start_time": times["start"], "end_time": times["end"]}
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `cd student-planner && python -m pytest tests/test_period_converter.py -v`
 Expected: All 7 tests PASS
@@ -725,7 +725,7 @@ A REST endpoint that accepts Excel or image files, parses them, and returns the 
 - Modify: `student-planner/app/main.py` (mount new router)
 - Create: `student-planner/tests/test_schedule_import_api.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 # tests/test_schedule_import_api.py
@@ -784,7 +784,7 @@ async def test_upload_requires_auth(client: AsyncClient):
     assert response.status_code == 403
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cd student-planner && python -m pytest tests/test_schedule_import_api.py -v`
 Expected: FAIL — 404 (route not registered)
