@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     vision_llm_api_key: str = ""
     vision_llm_base_url: str = ""
     vision_llm_model: str = "qwen-vl-plus"
+    session_timeout_minutes: int = 120
 
     model_config = {"env_prefix": "SP_"}
 
