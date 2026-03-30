@@ -138,7 +138,7 @@ def convert_periods(
 Run: `cd student-planner && python -m pytest tests/test_period_converter.py -v`
 Expected: All 7 tests PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd student-planner
@@ -158,7 +158,7 @@ Parses `.xlsx` files into a list of raw course dicts. Uses openpyxl. The parser 
 - Create: `student-planner/tests/fixtures/sample_schedule.xlsx`
 - Modify: `student-planner/pyproject.toml` (add openpyxl dependency)
 
-- [ ] **Step 1: Add openpyxl dependency**
+- [x] **Step 1: Add openpyxl dependency**
 
 In `pyproject.toml`, add `"openpyxl>=3.1.0"` to the `dependencies` list:
 
@@ -180,7 +180,7 @@ dependencies = [
 
 Then install: `cd student-planner && pip install -e '.[dev]'`
 
-- [ ] **Step 2: Create test fixture Excel file**
+- [x] **Step 2: Create test fixture Excel file**
 
 ```python
 # Run this once to generate the fixture (not a test file — a helper script)
@@ -223,7 +223,7 @@ wb.save("tests/fixtures/sample_schedule.xlsx")
 
 Run: `cd student-planner && mkdir -p tests/fixtures && python -c "<the script above>"`
 
-- [ ] **Step 3: Write the failing tests**
+- [x] **Step 3: Write the failing tests**
 
 ```python
 # tests/test_schedule_parser.py
@@ -302,12 +302,12 @@ def test_parse_total_course_count():
     assert len(courses) == 6
 ```
 
-- [ ] **Step 4: Run tests to verify they fail**
+- [x] **Step 4: Run tests to verify they fail**
 
 Run: `cd student-planner && python -m pytest tests/test_schedule_parser.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'app.services.schedule_parser'`
 
-- [ ] **Step 5: Implement schedule_parser.py**
+- [x] **Step 5: Implement schedule_parser.py**
 
 ```python
 # app/services/schedule_parser.py
@@ -434,7 +434,7 @@ def _parse_cell(text: str, weekday: int, period: str) -> list[RawCourse]:
     ]
 ```
 
-- [ ] **Step 6: Run tests to verify they pass**
+- [x] **Step 6: Run tests to verify they pass**
 
 Run: `cd student-planner && python -m pytest tests/test_schedule_parser.py -v`
 Expected: All 10 tests PASS
