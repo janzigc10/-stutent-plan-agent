@@ -4,6 +4,10 @@ __pycache__/
 *.egg-info/
 student-planner/test.db
 student-planner/student_planner.db
+student-planner/.env
+student-planner/.env.local
+student-planner/frontend/.env
+student-planner/frontend/.env.local
 student-planner/frontend/node_modules/
 student-planner/frontend/dist/
 student-planner/frontend/coverage/

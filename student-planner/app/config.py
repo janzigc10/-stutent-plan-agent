@@ -1,4 +1,9 @@
-from pydantic_settings import BaseSettings
+from pathlib import Path
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+BASE_DIR = Path(__file__).resolve().parent.parent
 
 
 class Settings(BaseSettings):
@@ -19,7 +24,11 @@ class Settings(BaseSettings):
     vapid_public_key: str = ""
     vapid_claims_email: str = "mailto:admin@studentplanner.local"
 
-    model_config = {"env_prefix": "SP_"}
+    model_config = SettingsConfigDict(
+        env_prefix="SP_",
+        env_file=BASE_DIR / ".env",
+        env_file_encoding="utf-8",
+    )
 
 
 settings = Settings()
