@@ -4,3 +4,8 @@ __pycache__/
 *.egg-info/
 student-planner/test.db
 student-planner/student_planner.db
+student-planner/frontend/node_modules/
+student-planner/frontend/dist/
+student-planner/frontend/coverage/
+student-planner/frontend/playwright-report/
+student-planner/frontend/test-results/

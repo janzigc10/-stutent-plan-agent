@@ -82,11 +82,11 @@ Run: `cd student-planner && py -3.12 -m pytest tests/test_auth.py tests/test_sch
 - Modify: `.gitignore`
 - Modify: `AGENTS.md`
 
-- [ ] **Step 1: Scaffold Vite React TypeScript app**
-- [ ] **Step 2: Add dependencies and scripts**
-- [ ] **Step 3: Configure Vite and PWA basics**
-- [ ] **Step 4: Run scaffold checks**
-- [ ] **Step 5: Update AGENTS.md and commit**
+- [x] **Step 1: Scaffold Vite React TypeScript app**
+- [x] **Step 2: Add dependencies and scripts**
+- [x] **Step 3: Configure Vite and PWA basics**
+- [x] **Step 4: Run scaffold checks**
+- [x] **Step 5: Update AGENTS.md and commit**
 
 Run: `cd student-planner/frontend && npm install && npm run typecheck && npm test && npm run build`
 
