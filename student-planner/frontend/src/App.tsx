@@ -6,6 +6,9 @@ import { CalendarPage } from './pages/CalendarPage'
 import { ChatPage } from './pages/ChatPage'
 import { LoginPage } from './pages/LoginPage'
 import { MePage } from './pages/MePage'
+import { CoursesPage } from './pages/CoursesPage'
+import { NotificationsPage } from './pages/NotificationsPage'
+import { PreferencesPage } from './pages/PreferencesPage'
 import { RegisterPage } from './pages/RegisterPage'
 import { useAuthStore } from './stores/authStore'
 
@@ -40,6 +43,9 @@ function App() {
           <Route path="/chat" element={<ChatPage />} />
           <Route path="/calendar" element={<CalendarPage />} />
           <Route path="/me" element={<MePage />} />
+          <Route path="/me/courses" element={<CoursesPage />} />
+          <Route path="/me/preferences" element={<PreferencesPage />} />
+          <Route path="/me/notifications" element={<NotificationsPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/chat" replace />} />
       </Routes>

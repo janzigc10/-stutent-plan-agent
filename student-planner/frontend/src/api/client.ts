@@ -62,6 +62,12 @@ export const api = {
   me() {
     return request<User>('/api/auth/me')
   },
+  updateMe(body: Pick<User, 'preferences' | 'current_semester_start'>) {
+    return request<User>('/api/auth/me', {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    })
+  },
   uploadSchedule(file: File) {
     const formData = new FormData()
     formData.append('file', file)
@@ -75,6 +81,18 @@ export const api = {
   },
   listCourses() {
     return request<Course[]>('/api/courses/')
+  },
+  updateCourse(courseId: string, body: Partial<Pick<Course, 'name' | 'teacher' | 'location' | 'weekday' | 'start_time' | 'end_time' | 'week_start' | 'week_end'>>) {
+    return request<Course>(`/api/courses/${courseId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    })
+  },
+  deleteCourse(courseId: string) {
+    return fetch(`/api/courses/${courseId}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${getStoredToken() ?? ''}` },
+    })
   },
   listTasks(dateFrom: string, dateTo: string) {
     return request<Task[]>(`/api/tasks/?date_from=${dateFrom}&date_to=${dateTo}`)
@@ -96,6 +114,20 @@ export const api = {
     return request<Task>(`/api/tasks/${taskId}`, {
       method: 'PATCH',
       body: JSON.stringify(body),
+    })
+  },
+  getVapidKey() {
+    return request<{ public_key: string }>('/api/push/vapid-key')
+  },
+  subscribePush(subscription: PushSubscriptionJSON) {
+    return request<{ status: string }>('/api/push/subscribe', {
+      method: 'POST',
+      body: JSON.stringify(subscription),
+    })
+  },
+  unsubscribePush() {
+    return request<{ status: string }>('/api/push/subscribe', {
+      method: 'DELETE',
     })
   },
 }

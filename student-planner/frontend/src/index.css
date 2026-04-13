@@ -323,3 +323,70 @@ a {
 .dot--task {
   background: #16a34a;
 }
+
+.me-page {
+  display: grid;
+  align-content: start;
+  gap: 22px;
+}
+
+.me-menu {
+  display: grid;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #ffffff;
+}
+
+.me-menu a {
+  padding: 16px;
+  text-decoration: none;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.me-menu a:last-child {
+  border-bottom: 0;
+}
+
+.import-button {
+  display: inline-grid;
+  place-items: center;
+  padding: 0 12px;
+}
+
+.import-button input {
+  display: none;
+}
+
+.course-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.course-grid section {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 12px;
+}
+
+.course-grid article {
+  border-top: 1px solid #e2e8f0;
+  padding: 10px 0;
+}
+
+.notification-settings {
+  display: grid;
+  gap: 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 14px;
+}
+
+.notification-settings button {
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  min-height: 40px;
+  background: #ffffff;
+}

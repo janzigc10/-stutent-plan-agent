@@ -144,13 +144,13 @@ Run: `cd student-planner/frontend && npm install && npm run typecheck && npm tes
 - Create/modify frontend me pages, course grid, preferences form, notification settings, push subscription utilities, tests.
 - Modify: `AGENTS.md`
 
-- [ ] **Step 1: Write failing me page, preferences, and notification tests**
-- [ ] **Step 2: Implement `/me` menu and logout**
-- [ ] **Step 3: Implement `/me/courses` weekly course grid and CRUD/import entry**
-- [ ] **Step 4: Implement `/me/preferences` saved via `PATCH /api/auth/me`**
-- [ ] **Step 5: Implement `/me/notifications` push subscribe/unsubscribe**
-- [ ] **Step 6: Run `npm run typecheck && npm test && npm run build`**
-- [ ] **Step 7: Update AGENTS.md to Task 7 and commit**
+- [x] **Step 1: Write failing me page, preferences, and notification tests**
+- [x] **Step 2: Implement `/me` menu and logout**
+- [x] **Step 3: Implement `/me/courses` weekly course grid and CRUD/import entry**
+- [x] **Step 4: Implement `/me/preferences` saved via `PATCH /api/auth/me`**
+- [x] **Step 5: Implement `/me/notifications` push subscribe/unsubscribe**
+- [x] **Step 6: Run `npm run typecheck && npm test && npm run build`**
+- [x] **Step 7: Update AGENTS.md to Task 7 and commit**
 
 ---
 
