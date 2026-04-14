@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ChangeEvent, FormEvent, MutableRefObject } from 'react'
 
-import { api, getStoredToken } from '../api/client'
+import { getStoredToken } from '../api/client'
 import type { ChatServerEvent } from '../stores/chatStore'
 import { useChatStore } from '../stores/chatStore'
 
@@ -10,6 +10,14 @@ type SpeechRecognitionInstance = {
   interimResults: boolean
   start: () => void
   onresult: ((event: { results: { 0: { transcript: string } }[] }) => void) | null
+}
+
+type AttachmentKind = 'image' | 'spreadsheet'
+
+interface PendingAttachment {
+  id: string
+  file: File
+  kind: AttachmentKind
 }
 
 function wsUrl() {
@@ -23,6 +31,17 @@ function sendJson(socketRef: MutableRefObject<WebSocket | null>, payload: unknow
   }
 }
 
+function detectAttachmentKind(file: File): AttachmentKind | null {
+  const name = file.name.toLowerCase()
+  if (file.type.startsWith('image/') || /\.(png|jpe?g|gif|webp|bmp|heic)$/i.test(name)) {
+    return 'image'
+  }
+  if (file.type.includes('spreadsheet') || file.type.includes('excel') || /\.(xls|xlsx|csv)$/i.test(name)) {
+    return 'spreadsheet'
+  }
+  return null
+}
+
 export function ChatPage() {
   const socketRef = useRef<WebSocket | null>(null)
   const reconnectRef = useRef(0)
@@ -30,7 +49,8 @@ export function ChatPage() {
   const { answerAsk, appendUserMessage, applyServerEvent, error, isSending, messages, pendingAsk, progress } =
     useChatStore()
   const [draft, setDraft] = useState('')
-  const [uploading, setUploading] = useState(false)
+  const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([])
+  const [attachmentError, setAttachmentError] = useState<string | null>(null)
   const hasSpeech = typeof window !== 'undefined' && 'webkitSpeechRecognition' in window
 
   useEffect(() => {
@@ -86,21 +106,62 @@ export function ChatPage() {
     sendJson(socketRef, { answer })
   }
 
-  async function uploadSchedule(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0]
-    if (!file) {
+  function addPendingAttachments(files: File[]) {
+    if (files.length === 0) {
       return
     }
-    setUploading(true)
-    try {
-      const result = await api.uploadSchedule(file)
-      const message = `我上传了课表文件，file_id=${result.file_id}，kind=${result.kind}，请解析并让我确认导入。`
-      appendUserMessage(message)
-      sendJson(socketRef, { message })
-    } finally {
-      setUploading(false)
-      event.target.value = ''
+
+    const kinds = files.map(detectAttachmentKind)
+    if (kinds.some((kind) => kind === null)) {
+      setAttachmentError('暂不支持该附件类型')
+      return
     }
+
+    const nextKind = kinds[0]
+    if (kinds.some((kind) => kind !== nextKind)) {
+      setAttachmentError('不能同时添加图片和表格')
+      return
+    }
+
+    const existingKind = pendingAttachments[0]?.kind ?? null
+    if (existingKind && existingKind !== nextKind) {
+      setAttachmentError('不能同时添加图片和表格')
+      return
+    }
+
+    if (nextKind === 'image' && pendingAttachments.filter((attachment) => attachment.kind === 'image').length + files.length > 3) {
+      setAttachmentError('最多只能添加 3 张图片')
+      return
+    }
+
+    if (
+      nextKind === 'spreadsheet' &&
+      pendingAttachments.filter((attachment) => attachment.kind === 'spreadsheet').length + files.length > 1
+    ) {
+      setAttachmentError('最多只能添加 1 个表格')
+      return
+    }
+
+    setPendingAttachments((current) => [
+      ...current,
+      ...files.map((file) => ({
+        id: crypto.randomUUID(),
+        file,
+        kind: nextKind,
+      })),
+    ])
+    setAttachmentError(null)
+  }
+
+  function uploadSchedule(event: ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.currentTarget.files ?? [])
+    addPendingAttachments(files)
+    event.currentTarget.value = ''
+  }
+
+  function removeAttachment(id: string) {
+    setPendingAttachments((current) => current.filter((attachment) => attachment.id !== id))
+    setAttachmentError(null)
   }
 
   function startSpeech() {
@@ -150,6 +211,25 @@ export function ChatPage() {
         ) : null}
         {error ? <p role="alert">{error}</p> : null}
       </div>
+
+      {pendingAttachments.length > 0 ? (
+        <section className="attachment-tray" aria-label="待发送附件">
+          <strong>待发送附件 {pendingAttachments.length}</strong>
+          <div className="attachment-tray__items">
+            {pendingAttachments.map((attachment) => (
+              <div className="attachment-tray__item" key={attachment.id}>
+                <span>{attachment.file.name}</span>
+                <button type="button" onClick={() => removeAttachment(attachment.id)}>
+                  移除 {attachment.file.name}
+                </button>
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
+      {attachmentError ? <p role="alert">{attachmentError}</p> : null}
+
       <form className="chat-input" onSubmit={submit}>
         <label className="icon-button">
           附件
@@ -158,8 +238,8 @@ export function ChatPage() {
             type="file"
             accept="image/*,.xls,.xlsx"
             capture="environment"
+            multiple
             onChange={uploadSchedule}
-            disabled={uploading}
           />
         </label>
         <button type="button" className="icon-button" onClick={startSpeech} disabled={!hasSpeech}>
