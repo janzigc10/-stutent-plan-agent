@@ -28,7 +28,10 @@ function wsUrl() {
 function sendJson(socketRef: MutableRefObject<WebSocket | null>, payload: unknown) {
   if (socketRef.current?.readyState === WebSocket.OPEN) {
     socketRef.current.send(JSON.stringify(payload))
+    return true
   }
+
+  return false
 }
 
 function buildAttachmentPrompt(fileId: string, kind: AttachmentKind) {
@@ -113,8 +116,12 @@ export function ChatPage() {
     if (attachments.length > 0) {
       try {
         const uploadResponse = await api.uploadSchedule(attachments.map((item) => item.file))
+        const sent = sendJson(socketRef, { message: buildAttachmentPrompt(uploadResponse.file_id, uploadResponse.kind) })
+        if (!sent) {
+          setAttachmentError('聊天连接不可用，请稍后重试')
+          return
+        }
         appendUserMessage(buildAttachmentConfirmation(uploadResponse.kind, uploadResponse.source_file_count))
-        sendJson(socketRef, { message: buildAttachmentPrompt(uploadResponse.file_id, uploadResponse.kind) })
         setPendingAttachments([])
         setAttachmentError(null)
       } catch (error) {

@@ -20,7 +20,7 @@ class MockWebSocket {
   readyState = MockWebSocket.OPEN
   onopen: (() => void) | null = null
   onmessage: ((event: MessageEvent) => void) | null = null
-  onclose: (() => void) | null = null
+  onclose: ((event: CloseEvent) => void) | null = null
 
   constructor(url: string) {
     this.url = url
@@ -185,5 +185,39 @@ describe('ChatPage attachment drafting', () => {
     )
     expect(await screen.findByText('已发送 1 个课表文件')).toBeInTheDocument()
     expect(screen.queryByText('schedule.xlsx')).not.toBeInTheDocument()
+  })
+
+  it('keeps pending attachments when the websocket cannot send the parse prompt after upload', async () => {
+    const user = userEvent.setup()
+    vi.spyOn(api, 'uploadSchedule').mockResolvedValue({
+      file_id: 'schedule-file-3',
+      kind: 'image',
+      count: 1,
+      source_file_count: 1,
+      courses: [],
+    })
+
+    render(<ChatPage />)
+
+    const socket = MockWebSocket.instances[0]
+    expect(socket).toBeDefined()
+    if (!socket) {
+      return
+    }
+    socket.readyState = 0
+
+    const input = screen.getByLabelText('上传课表')
+    await user.upload(input, createFile('math-1.png', 'image/png'))
+    await user.click(screen.getByRole('button', { name: '发送' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('聊天连接不可用，请稍后重试')
+    expect(screen.getByRole('region', { name: '待发送附件' })).toHaveTextContent('待发送附件 1')
+    expect(screen.getByText('math-1.png')).toBeInTheDocument()
+    expect(screen.queryByText('已发送 1 张课表图片')).not.toBeInTheDocument()
+    expect(socket.send).not.toHaveBeenCalledWith(
+      JSON.stringify({
+        message: '我上传了课表图片 file_id=schedule-file-3，请解析并展示确认卡片。',
+      }),
+    )
   })
 })
