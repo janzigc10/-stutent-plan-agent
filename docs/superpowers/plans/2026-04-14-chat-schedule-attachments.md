@@ -365,7 +365,7 @@ git commit -m "feat: send schedule attachments through chat"
 **Files:**
 - Modify: `AGENTS.md`
 
-- [ ] **Step 1: Run backend regression for upload and chat-adjacent behavior**
+- [x] **Step 1: Run backend regression for upload and chat-adjacent behavior**
 
 Run from `D:\student_time_plan\student-planner`:
 
@@ -375,7 +375,7 @@ py -3.12 -m pytest tests/test_schedule_import_api.py tests/test_schedule_integra
 
 Expected: PASS.
 
-- [ ] **Step 2: Run frontend regression and production build**
+- [x] **Step 2: Run frontend regression and production build**
 
 Run from `D:\student_time_plan\student-planner\frontend`:
 
@@ -386,7 +386,7 @@ npm run build
 
 Expected: PASS.
 
-- [ ] **Step 3: Manually verify the chat attachment flow**
+- [x] **Step 3: Manually verify the chat attachment flow**
 
 With the backend and frontend running:
 
@@ -397,7 +397,7 @@ With the backend and frontend running:
 
 Record any mismatch in `AGENTS.md` “问题记录” instead of changing scope.
 
-- [ ] **Step 4: Update `AGENTS.md` with the next active issue and commit**
+- [x] **Step 4: Update `AGENTS.md` with the next active issue and commit**
 
 Set “当前正在执行” to the next highest-priority unresolved item after attachment upload, then commit the verification state.
 
