@@ -3,8 +3,26 @@ import type { FormEvent, TouchEvent } from 'react'
 
 import { eventsForDate, useCalendarStore } from '../stores/calendarStore'
 
+function toDateString(date: Date) {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
 export function CalendarPage() {
-  const { completeTask, courses, createTask, currentDate, error, isLoading, load, shiftDate, tasks } = useCalendarStore()
+  const {
+    completeTask,
+    courses,
+    createTask,
+    currentDate,
+    error,
+    isLoading,
+    load,
+    setCurrentDate,
+    shiftDate,
+    tasks,
+  } = useCalendarStore()
   const [isMonthView, setIsMonthView] = useState(false)
   const [isAdding, setIsAdding] = useState(false)
   const [title, setTitle] = useState('')
@@ -17,6 +35,36 @@ export function CalendarPage() {
   useEffect(() => {
     void load()
   }, [load])
+
+  useEffect(() => {
+    function openTaskSheet() {
+      setIsAdding(true)
+    }
+    window.addEventListener('calendar:add-task', openTaskSheet)
+    return () => {
+      window.removeEventListener('calendar:add-task', openTaskSheet)
+    }
+  }, [])
+
+  const monthDays = useMemo(() => {
+    const [year, month] = currentDate.split('-').map((value) => Number(value))
+    if (!Number.isFinite(year) || !Number.isFinite(month)) {
+      return 31
+    }
+    return new Date(year, month, 0).getDate()
+  }, [currentDate])
+
+  function selectMonthDay(day: number) {
+    const [year, month] = currentDate.split('-').map((value) => Number(value))
+    if (!Number.isFinite(year) || !Number.isFinite(month)) {
+      setIsMonthView(false)
+      return
+    }
+    const nextDate = toDateString(new Date(year, month - 1, day))
+    setCurrentDate(nextDate)
+    void load()
+    setIsMonthView(false)
+  }
 
   async function submit(event: FormEvent) {
     event.preventDefault()
@@ -59,8 +107,8 @@ export function CalendarPage() {
           回到日视图
         </button>
         <div className="month-grid" aria-label="月视图">
-          {Array.from({ length: 31 }, (_, index) => index + 1).map((day) => (
-            <button type="button" key={day} onClick={() => setIsMonthView(false)}>
+          {Array.from({ length: monthDays }, (_, index) => index + 1).map((day) => (
+            <button type="button" key={day} onClick={() => selectMonthDay(day)}>
               {day}
               <span className="dot dot--course" />
               <span className="dot dot--task" />
