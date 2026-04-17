@@ -164,6 +164,23 @@ async def test_upload_unsupported_format(auth_client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
+async def test_upload_invalid_spreadsheet_returns_readable_error(auth_client: AsyncClient) -> None:
+    response = await auth_client.post(
+        "/api/schedule/upload",
+        files={
+            "file": (
+                "schedule.xls",
+                io.BytesIO(b"not-a-real-spreadsheet"),
+                "application/vnd.ms-excel",
+            )
+        },
+    )
+
+    assert response.status_code == 400
+    assert "课表文件无法解析" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
 async def test_upload_requires_auth(client: AsyncClient) -> None:
     response = await client.post(
         "/api/schedule/upload",

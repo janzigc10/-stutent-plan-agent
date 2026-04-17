@@ -57,6 +57,13 @@ export function toolLabel(name: string) {
   return toolLabels[name] ?? '处理中'
 }
 
+function clearError(state: ChatStateSnapshot): ChatStateSnapshot {
+  if (state.error === null) {
+    return state
+  }
+  return { ...state, error: null }
+}
+
 export function createInitialChatState(): ChatStateSnapshot {
   return {
     messages: [{ id: 'welcome', role: 'assistant', content: '你好！我是你的学习规划助手，有什么可以帮你的？' }],
@@ -68,42 +75,56 @@ export function createInitialChatState(): ChatStateSnapshot {
 }
 
 export function reduceChatEvent(state: ChatStateSnapshot, event: ChatServerEvent): ChatStateSnapshot {
+  if (event.type === 'connected') {
+    return {
+      ...clearError(state),
+      pendingAsk: null,
+      progress: [],
+      isSending: false,
+    }
+  }
   if (event.type === 'tool_call') {
     const nextProgress = state.progress.filter((item) => item.name !== event.name)
     return {
-      ...state,
+      ...clearError(state),
       progress: [...nextProgress, { name: event.name, label: toolLabel(event.name), status: 'running' }],
       isSending: true,
     }
   }
   if (event.type === 'tool_result') {
     return {
-      ...state,
+      ...clearError(state),
       progress: state.progress.map((item) => (item.name === event.name ? { ...item, status: 'done' } : item)),
     }
   }
   if (event.type === 'text') {
     return {
-      ...state,
+      ...clearError(state),
       messages: [...state.messages, { id: crypto.randomUUID(), role: 'assistant', content: event.content }],
     }
   }
   if (event.type === 'ask_user') {
+    const inferredType: AskType =
+      event.ask_type ?? event.mode ?? ((event.options?.length ?? 0) > 0 ? 'select' : 'review')
+    const inlineReviewAsk = inferredType === 'review' && (event.options?.length ?? 0) === 0 && event.data == null
     return {
-      ...state,
+      ...clearError(state),
+      messages: inlineReviewAsk
+        ? [...state.messages, { id: crypto.randomUUID(), role: 'assistant', content: event.question }]
+        : state.messages,
       pendingAsk: {
         question: event.question,
-        type: event.ask_type ?? event.mode ?? 'confirm',
+        type: inferredType,
         options: event.options ?? [],
         data: event.data ?? null,
       },
     }
   }
   if (event.type === 'error') {
-    return { ...state, error: event.message, isSending: false }
+    return { ...state, error: event.message, isSending: false, progress: [] }
   }
   if (event.type === 'done') {
-    return { ...state, isSending: false, progress: [] }
+    return { ...clearError(state), isSending: false, progress: [] }
   }
   return state
 }

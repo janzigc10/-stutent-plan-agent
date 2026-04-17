@@ -21,8 +21,8 @@ from app.services.reminder_scheduler import (
     resolve_fire_time,
     schedule_reminder_job,
 )
-from app.services.period_converter import DEFAULT_SCHEDULE, convert_periods
-from app.services.schedule_upload_cache import get_schedule_upload
+from app.services.period_converter import convert_periods, normalize_period, parse_time_range
+from app.services.schedule_upload_cache import get_schedule_upload, update_schedule_upload_state
 
 
 async def execute_tool(
@@ -339,7 +339,7 @@ async def _ask_user(
     db: AsyncSession | None = None,
     user_id: str | None = None,
     question: str = "",
-    type: str = "confirm",
+    type: str = "review",
     **kwargs,
 ) -> dict[str, Any]:
     return {
@@ -385,17 +385,53 @@ async def _parse_cached_schedule(
     user = result.scalar_one_or_none()
     schedule = _period_schedule_from_preferences(user.preferences if user else None)
 
+    missing_periods: list[str] = []
     converted: list[dict[str, Any]] = []
     for course in cached.courses:
         course_data = dict(course)
         if "start_time" not in course_data or "end_time" not in course_data:
-            period = course_data.get("period")
-            times = convert_periods(str(period), schedule) if period else None
+            raw_period = str(course_data.get("period") or "")
+            try:
+                period = normalize_period(raw_period)
+            except ValueError:
+                period = raw_period.strip()
+
+            if not period:
+                converted.append(course_data)
+                continue
+
+            times = convert_periods(period, schedule)
             if times is None:
-                return {"error": f"Cannot convert period: {period}"}
-            course_data.update(times)
+                if period not in missing_periods:
+                    missing_periods.append(period)
+            else:
+                course_data.update(times)
         converted.append(course_data)
 
+    if missing_periods:
+        update_schedule_upload_state(
+            user_id,
+            file_id,
+            status="NEED_PERIOD_TIMES",
+            missing_periods=missing_periods,
+            courses=converted,
+        )
+        return {
+            "status": "need_period_times",
+            "kind": cached.kind,
+            "courses": converted,
+            "missing_periods": missing_periods,
+            "message": "课表已识别节次，但缺少具体上课时间，请先向用户追问节次时间。",
+            "file_id": file_id,
+        }
+
+    update_schedule_upload_state(
+        user_id,
+        file_id,
+        status="READY",
+        missing_periods=[],
+        courses=converted,
+    )
     return {
         "status": "ready",
         "kind": cached.kind,
@@ -406,13 +442,108 @@ async def _parse_cached_schedule(
     }
 
 
-def _period_schedule_from_preferences(preferences: dict[str, Any] | None) -> dict[str, dict[str, str]]:
-    if not preferences:
-        return DEFAULT_SCHEDULE
+def _period_schedule_from_preferences(
+    preferences: dict[str, Any] | None,
+    term_id: str = "default",
+) -> dict[str, dict[str, str]]:
+    if not isinstance(preferences, dict):
+        return {}
+
+    templates = preferences.get("period_schedule_templates")
+    if isinstance(templates, dict):
+        schedule = templates.get(term_id)
+        if isinstance(schedule, dict):
+            return schedule
+
     schedule = preferences.get("period_schedule")
     if isinstance(schedule, dict):
         return schedule
-    return DEFAULT_SCHEDULE
+
+    return {}
+
+
+async def _save_period_times(
+    db: AsyncSession,
+    user_id: str,
+    file_id: str,
+    entries: list[dict[str, str]],
+    term_id: str = "default",
+    **kwargs,
+) -> dict[str, Any]:
+    cached = get_schedule_upload(user_id, file_id)
+    if cached is None:
+        return {"error": "Schedule upload not found"}
+
+    required_periods = cached.missing_periods or sorted(
+        {
+            str(course.get("period") or "").strip()
+            for course in cached.courses
+            if str(course.get("period") or "").strip()
+        }
+    )
+
+    period_map: dict[str, dict[str, str]] = {}
+    for entry in entries:
+        try:
+            period = normalize_period(str(entry.get("period") or ""))
+            start_time, end_time = parse_time_range(str(entry.get("time") or ""))
+        except ValueError as exc:
+            return {"error": str(exc)}
+
+        period_map[period] = {"start": start_time, "end": end_time}
+
+    still_missing = [period for period in required_periods if period not in period_map]
+    if still_missing:
+        return {
+            "status": "need_period_times",
+            "file_id": file_id,
+            "missing_periods": still_missing,
+            "message": "仍有节次未填写，请继续补充。",
+        }
+
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if user is None:
+        return {"error": "User not found"}
+
+    preferences = dict(user.preferences or {})
+    templates = dict(preferences.get("period_schedule_templates") or {})
+    term_schedule = dict(templates.get(term_id) or {})
+    term_schedule.update(period_map)
+    templates[term_id] = term_schedule
+    preferences["period_schedule_templates"] = templates
+    user.preferences = preferences
+
+    updated_courses: list[dict[str, Any]] = []
+    for course in cached.courses:
+        course_data = dict(course)
+        if "start_time" not in course_data or "end_time" not in course_data:
+            raw_period = str(course_data.get("period") or "")
+            try:
+                period = normalize_period(raw_period)
+            except ValueError:
+                period = raw_period.strip()
+            times = convert_periods(period, term_schedule) if period else None
+            if times is not None:
+                course_data.update(times)
+        updated_courses.append(course_data)
+
+    update_schedule_upload_state(
+        user_id,
+        file_id,
+        status="READY",
+        missing_periods=[],
+        courses=updated_courses,
+    )
+    await db.commit()
+
+    return {
+        "status": "ready",
+        "file_id": file_id,
+        "courses": updated_courses,
+        "count": len(updated_courses),
+        "message": "节次时间已保存，请确认课表后再导入。",
+    }
 
 
 async def _bulk_import_courses(
@@ -425,14 +556,22 @@ async def _bulk_import_courses(
     reminders_created = 0
     advance_minutes = await _default_reminder_minutes(db, user_id)
     for course_data in courses:
+        start_time = course_data.get("start_time")
+        end_time = course_data.get("end_time")
+        if not start_time or not end_time:
+            period = course_data.get("period")
+            return {
+                "error": f"课程 {course_data.get('name', '未命名课程')} 缺少具体时间，请先补充节次时间（period={period}）。"
+            }
+
         course = Course(
             user_id=user_id,
             name=course_data["name"],
             teacher=course_data.get("teacher"),
             location=course_data.get("location"),
             weekday=course_data["weekday"],
-            start_time=course_data["start_time"],
-            end_time=course_data["end_time"],
+            start_time=start_time,
+            end_time=end_time,
             week_start=course_data.get("week_start", 1),
             week_end=course_data.get("week_end", 16),
         )
@@ -551,6 +690,7 @@ TOOL_HANDLERS = {
     "ask_user": _ask_user,
     "parse_schedule": _parse_schedule,
     "parse_schedule_image": _parse_schedule_image,
+    "save_period_times": _save_period_times,
     "bulk_import_courses": _bulk_import_courses,
     "recall_memory": _recall_memory,
     "save_memory": _save_memory,

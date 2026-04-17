@@ -114,3 +114,44 @@ async def test_ask_user_event_preserves_event_type(setup_db):
             ask_event = await generator.__anext__()
             assert ask_event["type"] == "ask_user"
             assert ask_event["ask_type"] == "confirm"
+
+
+@pytest.mark.asyncio
+async def test_ask_user_without_options_or_data_defaults_to_review(setup_db):
+    """ask_user confirm without options/data should degrade to free-text review mode."""
+    mock_client = AsyncMock()
+    call_count = 0
+
+    async def mock_chat_completion(client, messages, tools=None):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": "ask_user",
+                            "arguments": '{"question": "请补充节次时间", "type": "confirm"}',
+                        },
+                    }
+                ],
+            }
+        return {"role": "assistant", "content": "收到"}
+
+    with patch("app.agent.loop.chat_completion", side_effect=mock_chat_completion):
+        async with TestSession() as db:
+            user = User(id="u4", username="test4", hashed_password="x")
+            db.add(user)
+            await db.commit()
+
+            generator = run_agent_loop("帮我安排", user, "session-4", db, mock_client)
+            event = await generator.__anext__()
+            assert event["type"] == "tool_call"
+
+            ask_event = await generator.__anext__()
+            assert ask_event["type"] == "ask_user"
+            assert ask_event["ask_type"] == "review"

@@ -245,6 +245,40 @@ TOOL_DEFINITIONS: list[dict] = [
     {
         "type": "function",
         "function": {
+            "name": "save_period_times",
+            "description": "Save user confirmed period-time mapping for a parsed schedule upload.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file_id": {
+                        "type": "string",
+                        "description": "Temporary upload identifier returned by parse_schedule",
+                    },
+                    "term_id": {
+                        "type": "string",
+                        "description": "Term identifier, defaults to default",
+                        "default": "default",
+                    },
+                    "entries": {
+                        "type": "array",
+                        "description": "Period-time pairs",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "period": {"type": "string", "description": "例如 1-2"},
+                                "time": {"type": "string", "description": "HH:MM-HH:MM"},
+                            },
+                            "required": ["period", "time"],
+                        },
+                    },
+                },
+                "required": ["file_id", "entries"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "bulk_import_courses",
             "description": "Bulk import a confirmed list of courses into the user's schedule.",
             "parameters": {

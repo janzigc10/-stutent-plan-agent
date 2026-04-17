@@ -22,6 +22,22 @@ from app.services.context_compressor import compress_conversation_history, compr
 
 KNOWN_TOOLS = {tool["function"]["name"] for tool in TOOL_DEFINITIONS}
 MAX_ITERATIONS = 20
+VALID_ASK_TYPES = {"confirm", "select", "review"}
+
+
+def _normalize_ask_type(result: dict[str, Any]) -> str:
+    ask_type = result.get("type")
+    if ask_type not in VALID_ASK_TYPES:
+        return "review"
+
+    options = result.get("options")
+    has_options = isinstance(options, list) and len(options) > 0
+    has_data = result.get("data") is not None
+
+    if ask_type == "confirm" and not has_options and not has_data:
+        return "review"
+
+    return ask_type
 
 
 async def run_agent_loop(
@@ -99,9 +115,10 @@ async def run_agent_loop(
 
             if tool_name == "ask_user":
                 result = await execute_tool(tool_name, tool_args, db, user.id)
-                user_response = yield {**result, "type": "ask_user", "ask_type": result.get("type")}
+                ask_type = _normalize_ask_type(result)
+                user_response = yield {**result, "type": "ask_user", "ask_type": ask_type}
                 if user_response is None:
-                    user_response = "纭"
+                    user_response = "确认"
                 tool_result_content = json.dumps({"user_response": user_response}, ensure_ascii=False)
             else:
                 result = await execute_tool(tool_name, tool_args, db, user.id)

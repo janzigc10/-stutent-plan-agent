@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -231,5 +231,84 @@ describe('ChatPage attachment drafting', () => {
         message: '我上传了课表图片 file_id=schedule-file-3，请解析并展示确认卡片。',
       }),
     )
+  })
+
+  it('does not append a text message when the websocket cannot send it', async () => {
+    const user = userEvent.setup()
+
+    render(<ChatPage />)
+
+    const socket = MockWebSocket.instances[0]
+    expect(socket).toBeDefined()
+    if (!socket) {
+      return
+    }
+    socket.readyState = 0
+
+    await user.type(screen.getByLabelText('输入消息'), '帮我安排今天的复习')
+    await user.click(screen.getByRole('button', { name: '发送' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('聊天连接不可用，请稍后重试')
+    expect(screen.getByLabelText('输入消息')).toHaveValue('帮我安排今天的复习')
+    expect(screen.queryByText('帮我安排今天的复习')).not.toBeInTheDocument()
+    expect(socket.send).not.toHaveBeenCalledWith(
+      JSON.stringify({
+        message: '帮我安排今天的复习',
+      }),
+    )
+  })
+
+  it('routes plain review follow-up answers through the main input as ask_user answers', async () => {
+    const user = userEvent.setup()
+    render(<ChatPage />)
+
+    act(() => {
+      useChatStore.getState().applyServerEvent({
+        type: 'ask_user',
+        question: '请补充第1-2节和第3-4节时间',
+        ask_type: 'review',
+      })
+    })
+
+    expect(screen.getByText('请补充第1-2节和第3-4节时间')).toBeInTheDocument()
+    expect(screen.queryByLabelText('回复内容')).not.toBeInTheDocument()
+
+    await user.type(screen.getByLabelText('输入消息'), '1-2节 08:30-10:05，3-4节 10:20-11:55')
+    await user.click(screen.getByRole('button', { name: '发送' }))
+
+    expect(MockWebSocket.instances[0]?.send).toHaveBeenLastCalledWith(
+      JSON.stringify({
+        answer: '1-2节 08:30-10:05，3-4节 10:20-11:55',
+      }),
+    )
+    expect(screen.getByText('1-2节 08:30-10:05，3-4节 10:20-11:55')).toBeInTheDocument()
+  })
+
+  it('shows a timeout error when the server never responds after a text send', async () => {
+    vi.useFakeTimers()
+
+    try {
+      render(<ChatPage />)
+
+      fireEvent.change(screen.getByLabelText('输入消息'), {
+        target: { value: '帮我安排今天的复习' },
+      })
+      fireEvent.click(screen.getByRole('button', { name: '发送' }))
+
+      expect(MockWebSocket.instances[0]?.send).toHaveBeenLastCalledWith(
+        JSON.stringify({
+          message: '帮我安排今天的复习',
+        }),
+      )
+      expect(screen.getByText('帮我安排今天的复习')).toBeInTheDocument()
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(15000)
+      })
+
+      expect(screen.getByRole('alert')).toHaveTextContent('助手暂时没有响应，请重试')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

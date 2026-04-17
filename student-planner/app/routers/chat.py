@@ -16,6 +16,9 @@ router = APIRouter(tags=["chat"])
 @router.websocket("/ws/chat")
 async def chat_websocket(websocket: WebSocket) -> None:
     await websocket.accept()
+    user_id: str | None = None
+    session_id: str | None = None
+    llm_client = None
 
     try:
         auth_message = await websocket.receive_json()
@@ -30,19 +33,40 @@ async def chat_websocket(websocket: WebSocket) -> None:
             await websocket.send_json({"type": "error", "message": "Invalid token"})
             await websocket.close()
             return
+    except WebSocketDisconnect:
+        return
+    except RuntimeError:
+        return
     except Exception:
-        await websocket.close()
+        try:
+            await websocket.close()
+        except RuntimeError:
+            pass
         return
 
     session_id = str(uuid.uuid4())
     llm_client = create_llm_client()
-    await websocket.send_json({"type": "connected", "session_id": session_id})
+    try:
+        await websocket.send_json({"type": "connected", "session_id": session_id})
+    except (RuntimeError, WebSocketDisconnect):
+        return
 
     try:
         while True:
             data = await websocket.receive_json()
-            user_message = data.get("message", "")
+            user_message = str(data.get("message") or "").strip()
             if not user_message:
+                orphan_answer = str(data.get("answer") or "").strip()
+                if orphan_answer:
+                    try:
+                        await websocket.send_json(
+                            {
+                                "type": "error",
+                                "message": "当前没有待确认的问题，请先发送消息或重新触发操作。",
+                            }
+                        )
+                    except (RuntimeError, WebSocketDisconnect):
+                        return
                 continue
 
             async for db in get_db():
@@ -58,8 +82,18 @@ async def chat_websocket(websocket: WebSocket) -> None:
                     while True:
                         await websocket.send_json(event)
                         if event["type"] == "ask_user":
-                            user_response = await websocket.receive_json()
-                            user_answer = user_response.get("answer", "确认")
+                            while True:
+                                user_response = await websocket.receive_json()
+                                user_answer = (
+                                    user_response.get("answer")
+                                    or user_response.get("message")
+                                    or ""
+                                ).strip()
+                                if user_answer:
+                                    break
+                                await websocket.send_json(
+                                    {"type": "error", "message": "请输入回复内容后再提交"}
+                                )
                             event = await generator.asend(user_answer)
                         elif event["type"] == "done":
                             break
@@ -67,6 +101,18 @@ async def chat_websocket(websocket: WebSocket) -> None:
                             event = await generator.__anext__()
                 except StopAsyncIteration:
                     pass
+                except WebSocketDisconnect:
+                    return
+                except Exception:
+                    try:
+                        await websocket.send_json(
+                            {"type": "error", "message": "聊天暂时不可用，请稍后重试"}
+                        )
+                    except (RuntimeError, WebSocketDisconnect):
+                        return
     except WebSocketDisconnect:
-        async for db in get_db():
-            await end_session(db, user_id, session_id, llm_client)
+        return
+    finally:
+        if user_id and session_id and llm_client is not None:
+            async for db in get_db():
+                await end_session(db, user_id, session_id, llm_client)

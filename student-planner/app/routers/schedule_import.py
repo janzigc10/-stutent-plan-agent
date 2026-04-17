@@ -1,7 +1,9 @@
 from io import BytesIO
 from typing import Any
+from zipfile import BadZipFile
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from openpyxl.utils.exceptions import InvalidFileException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import get_current_user
@@ -61,7 +63,13 @@ async def upload_schedule(
     course_dicts: list[dict[str, Any]] = []
     if kind == "spreadsheet":
         file_bytes = await uploads[0].read()
-        courses = parse_excel_schedule(BytesIO(file_bytes))
+        try:
+            courses = parse_excel_schedule(BytesIO(file_bytes))
+        except (BadZipFile, InvalidFileException, ValueError, OSError) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="课表文件无法解析，请确认文件有效；当前支持 xlsx、xls，若为 et 请另存为 xlsx 后重试。",
+            ) from exc
         course_dicts.extend(_raw_course_to_dict(course) for course in courses)
     else:
         from app.agent.schedule_ocr import parse_schedule_image

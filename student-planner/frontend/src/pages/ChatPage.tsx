@@ -20,6 +20,8 @@ interface PendingAttachment {
   kind: AttachmentKind
 }
 
+const CHAT_RESPONSE_TIMEOUT_MS = 15000
+
 function wsUrl() {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
   return `${protocol}//${window.location.host}/ws/chat`
@@ -69,12 +71,34 @@ export function ChatPage() {
   const socketRef = useRef<WebSocket | null>(null)
   const reconnectRef = useRef(0)
   const reconnectTimerRef = useRef<number | null>(null)
+  const responseTimeoutRef = useRef<number | null>(null)
   const { answerAsk, appendUserMessage, applyServerEvent, error, isSending, messages, pendingAsk, progress } =
     useChatStore()
   const [draft, setDraft] = useState('')
+  const [askDraft, setAskDraft] = useState('')
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([])
   const [attachmentError, setAttachmentError] = useState<string | null>(null)
   const hasSpeech = typeof window !== 'undefined' && 'webkitSpeechRecognition' in window
+  const inlineTextAsk =
+    pendingAsk !== null &&
+    pendingAsk.type === 'review' &&
+    pendingAsk.options.length === 0 &&
+    pendingAsk.data == null
+
+  function clearResponseTimeout() {
+    if (responseTimeoutRef.current !== null) {
+      window.clearTimeout(responseTimeoutRef.current)
+      responseTimeoutRef.current = null
+    }
+  }
+
+  function startResponseTimeout() {
+    clearResponseTimeout()
+    responseTimeoutRef.current = window.setTimeout(() => {
+      responseTimeoutRef.current = null
+      applyServerEvent({ type: 'error', message: '助手暂时没有响应，请重试' })
+    }, CHAT_RESPONSE_TIMEOUT_MS)
+  }
 
   useEffect(() => {
     let closed = false
@@ -91,9 +115,15 @@ export function ChatPage() {
         socket.send(JSON.stringify({ token }))
       }
       socket.onmessage = (event) => {
+        clearResponseTimeout()
         applyServerEvent(JSON.parse(event.data) as ChatServerEvent)
       }
       socket.onclose = () => {
+        const waitingForResponse = responseTimeoutRef.current !== null
+        clearResponseTimeout()
+        if (waitingForResponse) {
+          applyServerEvent({ type: 'error', message: '聊天连接已断开，请重试' })
+        }
         if (closed) {
           return
         }
@@ -109,9 +139,14 @@ export function ChatPage() {
       if (reconnectTimerRef.current) {
         window.clearTimeout(reconnectTimerRef.current)
       }
+      clearResponseTimeout()
       socketRef.current?.close()
     }
   }, [applyServerEvent])
+
+  useEffect(() => {
+    setAskDraft('')
+  }, [pendingAsk?.question, pendingAsk?.type])
 
   async function submit(event: FormEvent) {
     event.preventDefault()
@@ -134,6 +169,7 @@ export function ChatPage() {
         appendUserMessage(buildAttachmentConfirmation(uploadResponse.kind, uploadResponse.source_file_count))
         setPendingAttachments([])
         setAttachmentError(null)
+        startResponseTimeout()
       } catch (error) {
         setAttachmentError(error instanceof Error ? error.message : '课表上传失败')
       }
@@ -144,14 +180,44 @@ export function ChatPage() {
       return
     }
 
+    if (inlineTextAsk && !pendingAsk.answered) {
+      const sent = sendJson(socketRef, { answer: message })
+      if (!sent) {
+        applyServerEvent({ type: 'error', message: '聊天连接不可用，请稍后重试' })
+        return
+      }
+
+      appendUserMessage(message)
+      answerAsk(message)
+      setDraft('')
+      startResponseTimeout()
+      return
+    }
+
+    const sent = sendJson(socketRef, { message })
+    if (!sent) {
+      applyServerEvent({ type: 'error', message: '聊天连接不可用，请稍后重试' })
+      return
+    }
+
     appendUserMessage(message)
-    sendJson(socketRef, { message })
     setDraft('')
+    startResponseTimeout()
   }
 
   function submitAnswer(answer: string) {
-    answerAsk(answer)
-    sendJson(socketRef, { answer })
+    const normalized = answer.trim()
+    if (!normalized) {
+      return
+    }
+    const sent = sendJson(socketRef, { answer: normalized })
+    if (!sent) {
+      applyServerEvent({ type: 'error', message: '聊天连接不可用，请稍后重试' })
+      return
+    }
+
+    answerAsk(normalized)
+    startResponseTimeout()
   }
 
   function addPendingAttachments(files: File[]) {
@@ -240,7 +306,7 @@ export function ChatPage() {
             ))}
           </section>
         ) : null}
-        {pendingAsk ? (
+        {pendingAsk && !inlineTextAsk ? (
           <section className="ask-card" aria-label="需要确认">
             <p>{pendingAsk.question}</p>
             {pendingAsk.data ? <pre>{JSON.stringify(pendingAsk.data, null, 2)}</pre> : null}
@@ -248,11 +314,41 @@ export function ChatPage() {
               <p>已选择：{pendingAsk.answered}</p>
             ) : (
               <div className="ask-card__actions">
-                {(pendingAsk.options.length > 0 ? pendingAsk.options : ['确认', '取消']).map((option) => (
-                  <button type="button" key={option} onClick={() => submitAnswer(option)}>
-                    {option}
-                  </button>
-                ))}
+                {pendingAsk.type === 'confirm' ? (
+                  (pendingAsk.options.length > 0 ? pendingAsk.options : ['确认', '取消']).map((option) => (
+                    <button type="button" key={option} onClick={() => submitAnswer(option)}>
+                      {option}
+                    </button>
+                  ))
+                ) : pendingAsk.type === 'select' ? (
+                  pendingAsk.options.length > 0 ? (
+                    pendingAsk.options.map((option) => (
+                      <button type="button" key={option} onClick={() => submitAnswer(option)}>
+                        {option}
+                      </button>
+                    ))
+                  ) : (
+                    <p role="alert">选项缺失，请重新发送或联系管理员。</p>
+                  )
+                ) : pendingAsk.type === 'review' && pendingAsk.data ? (
+                  (pendingAsk.options.length > 0 ? pendingAsk.options : ['确认', '取消']).map((option) => (
+                    <button type="button" key={option} onClick={() => submitAnswer(option)}>
+                      {option}
+                    </button>
+                  ))
+                ) : (
+                  <>
+                    <input
+                      aria-label="回复内容"
+                      value={askDraft}
+                      onChange={(event) => setAskDraft(event.target.value)}
+                      placeholder="请输入你的补充信息"
+                    />
+                    <button type="button" onClick={() => submitAnswer(askDraft)}>
+                      提交
+                    </button>
+                  </>
+                )}
               </div>
             )}
           </section>

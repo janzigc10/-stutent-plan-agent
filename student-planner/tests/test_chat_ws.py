@@ -1,5 +1,10 @@
-import pytest
+from unittest.mock import AsyncMock, patch
 
+import pytest
+from fastapi.testclient import TestClient
+
+from app.auth.jwt import create_access_token
+from app.models.user import User
 from tests.conftest import TestSession
 
 
@@ -19,3 +24,135 @@ async def test_ws_auth_required(client):
 
     routes = [route.path for route in app.routes]
     assert "/ws/chat" in routes
+
+
+@pytest.mark.asyncio
+async def test_ws_returns_error_event_when_agent_loop_raises(setup_db):
+    from app.main import create_app
+
+    app = create_app()
+
+    async def override_get_db():
+        async with TestSession() as session:
+            yield session
+
+    async with TestSession() as session:
+        user = User(username="ws-user", hashed_password="x")
+        session.add(user)
+        await session.commit()
+        await session.refresh(user)
+        user_id = user.id
+
+    async def failing_agent_loop(*args, **kwargs):
+        raise RuntimeError("boom")
+        yield {}
+
+    token = create_access_token(user_id)
+
+    with (
+        patch("app.routers.chat.create_llm_client", return_value=AsyncMock()),
+        patch("app.routers.chat.get_db", side_effect=override_get_db),
+        patch("app.routers.chat.run_agent_loop", side_effect=failing_agent_loop),
+        patch("app.routers.chat.end_session", new_callable=AsyncMock),
+    ):
+        client = TestClient(app, raise_server_exceptions=False)
+        with client.websocket_connect("/ws/chat") as websocket:
+            websocket.send_json({"token": token})
+            assert websocket.receive_json()["type"] == "connected"
+
+            websocket.send_json({"message": "help me plan today"})
+            event = websocket.receive_json()
+
+        assert event["type"] == "error"
+        assert isinstance(event.get("message"), str) and event["message"].strip()
+
+
+@pytest.mark.asyncio
+async def test_ws_disconnect_while_waiting_for_ask_user_answer_is_graceful(setup_db):
+    from app.main import create_app
+
+    app = create_app()
+
+    async def override_get_db():
+        async with TestSession() as session:
+            yield session
+
+    async with TestSession() as session:
+        user = User(username="ws-user-2", hashed_password="x")
+        session.add(user)
+        await session.commit()
+        await session.refresh(user)
+        user_id = user.id
+
+    async def ask_then_wait(*args, **kwargs):
+        yield {
+            "type": "ask_user",
+            "question": "please provide period times",
+            "ask_type": "review",
+            "options": [],
+            "data": None,
+        }
+        yield {"type": "done"}
+
+    token = create_access_token(user_id)
+
+    with (
+        patch("app.routers.chat.create_llm_client", return_value=AsyncMock()),
+        patch("app.routers.chat.get_db", side_effect=override_get_db),
+        patch("app.routers.chat.run_agent_loop", side_effect=ask_then_wait),
+        patch("app.routers.chat.end_session", new_callable=AsyncMock) as mock_end_session,
+    ):
+        client = TestClient(app)
+        with client.websocket_connect("/ws/chat") as websocket:
+            websocket.send_json({"token": token})
+            assert websocket.receive_json()["type"] == "connected"
+
+            websocket.send_json({"message": "please continue"})
+            event = websocket.receive_json()
+            assert event["type"] == "ask_user"
+
+        mock_end_session.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_ws_returns_error_for_orphan_answer_payload(setup_db):
+    from app.main import create_app
+
+    app = create_app()
+
+    async def override_get_db():
+        async with TestSession() as session:
+            yield session
+
+    async with TestSession() as session:
+        user = User(username="ws-user-3", hashed_password="x")
+        session.add(user)
+        await session.commit()
+        await session.refresh(user)
+        user_id = user.id
+
+    async def done_only_agent_loop(*args, **kwargs):
+        yield {"type": "done"}
+
+    token = create_access_token(user_id)
+
+    with (
+        patch("app.routers.chat.create_llm_client", return_value=AsyncMock()),
+        patch("app.routers.chat.get_db", side_effect=override_get_db),
+        patch("app.routers.chat.run_agent_loop", side_effect=done_only_agent_loop),
+        patch("app.routers.chat.end_session", new_callable=AsyncMock),
+    ):
+        client = TestClient(app)
+        with client.websocket_connect("/ws/chat") as websocket:
+            websocket.send_json({"token": token})
+            assert websocket.receive_json()["type"] == "connected"
+
+            websocket.send_json({"answer": "confirm"})
+            websocket.send_json({"message": "continue"})
+
+            first_event = websocket.receive_json()
+
+        assert first_event == {
+            "type": "error",
+            "message": "当前没有待确认的问题，请先发送消息或重新触发操作。",
+        }
