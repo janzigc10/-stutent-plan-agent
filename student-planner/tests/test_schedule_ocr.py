@@ -91,3 +91,58 @@ async def test_parse_image_handles_missing_weeks() -> None:
     assert len(courses) == 1
     assert courses[0].week_start == 1
     assert courses[0].week_end == 16
+
+
+@pytest.mark.asyncio
+async def test_parse_image_supports_fenced_json_and_array_period() -> None:
+    response_data = """```json
+[
+  {
+    "name": "自然语言处理",
+    "teacher": "",
+    "location": "",
+    "weekday": 3,
+    "period": [1, 2],
+    "weeks": ""
+  }
+]
+```"""
+    mock_response = {"role": "assistant", "content": response_data}
+    with patch(
+        "app.agent.schedule_ocr._vision_completion",
+        new_callable=AsyncMock,
+        return_value=mock_response,
+    ):
+        courses = await parse_schedule_image(b"fake-image-bytes", "image/png")
+
+    assert len(courses) == 1
+    assert courses[0].period == "1-2"
+    assert courses[0].weekday == 3
+
+
+@pytest.mark.asyncio
+async def test_parse_image_supports_chinese_weekday_text() -> None:
+    response_data = json.dumps(
+        [
+            {
+                "name": "大学生就业指导",
+                "teacher": "",
+                "location": "",
+                "weekday": "周三",
+                "period": "第9-10节",
+                "weeks": "",
+            }
+        ],
+        ensure_ascii=False,
+    )
+    mock_response = {"role": "assistant", "content": response_data}
+    with patch(
+        "app.agent.schedule_ocr._vision_completion",
+        new_callable=AsyncMock,
+        return_value=mock_response,
+    ):
+        courses = await parse_schedule_image(b"fake-image-bytes", "image/png")
+
+    assert len(courses) == 1
+    assert courses[0].weekday == 3
+    assert courses[0].period == "9-10"

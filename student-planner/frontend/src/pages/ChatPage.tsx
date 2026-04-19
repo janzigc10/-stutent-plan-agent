@@ -320,6 +320,7 @@ export function ChatPage() {
   const reconnectRef = useRef(0)
   const reconnectTimerRef = useRef<number | null>(null)
   const responseTimeoutRef = useRef<number | null>(null)
+  const sendGuardRef = useRef(false)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const {
     answerAsk,
@@ -336,6 +337,7 @@ export function ChatPage() {
   const [askDraft, setAskDraft] = useState('')
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([])
   const [attachmentError, setAttachmentError] = useState<string | null>(null)
+  const [isBusySending, setIsBusySending] = useState(false)
   const hasSpeech = typeof window !== 'undefined' && 'webkitSpeechRecognition' in window
   const inlineTextAsk = isInlineTextAsk(pendingAsk)
   const shouldRenderAskCard = pendingAsk !== null && !inlineTextAsk && !(pendingAsk.answered && progress.length > 0)
@@ -382,10 +384,21 @@ export function ChatPage() {
     }
   }
 
+  function lockSending() {
+    sendGuardRef.current = true
+    setIsBusySending(true)
+  }
+
+  function unlockSending() {
+    sendGuardRef.current = false
+    setIsBusySending(false)
+  }
+
   function startResponseTimeout() {
     clearResponseTimeout()
     responseTimeoutRef.current = window.setTimeout(() => {
       responseTimeoutRef.current = null
+      unlockSending()
       applyServerEvent({ type: 'error', message: '助手暂时没有响应，请重试' })
     }, CHAT_RESPONSE_TIMEOUT_MS)
   }
@@ -406,11 +419,13 @@ export function ChatPage() {
       }
       socket.onmessage = (event) => {
         clearResponseTimeout()
+        unlockSending()
         applyServerEvent(JSON.parse(event.data) as ChatServerEvent)
       }
       socket.onclose = () => {
         const waitingForResponse = responseTimeoutRef.current !== null
         clearResponseTimeout()
+        unlockSending()
         if (waitingForResponse) {
           applyServerEvent({ type: 'error', message: '聊天连接已断开，请重试' })
         }
@@ -443,17 +458,23 @@ export function ChatPage() {
     const message = draft.trim()
     const attachments = pendingAttachments
 
+    if (sendGuardRef.current || isBusySending) {
+      return
+    }
+
     if (attachments.length > 0 && message) {
       setAttachmentError('文字草稿和附件不能一起发送，请分开发送。')
       return
     }
 
     if (attachments.length > 0) {
+      lockSending()
       try {
         const uploadResponse = await api.uploadSchedule(attachments.map((item) => item.file))
         const sent = sendJson(socketRef, { message: buildAttachmentPrompt(uploadResponse.file_id, uploadResponse.kind) })
         if (!sent) {
           setAttachmentError('聊天连接不可用，请稍后重试')
+          unlockSending()
           return
         }
         appendUserMessage(buildAttachmentConfirmation(uploadResponse.kind, uploadResponse.source_file_count))
@@ -462,6 +483,7 @@ export function ChatPage() {
         startResponseTimeout()
       } catch (uploadError) {
         setAttachmentError(uploadError instanceof Error ? uploadError.message : '课表上传失败')
+        unlockSending()
       }
       return
     }
@@ -470,11 +492,13 @@ export function ChatPage() {
       return
     }
 
+    lockSending()
     const shouldAnswerPendingAsk = pendingAsk !== null && !pendingAsk.answered
     const payload = shouldAnswerPendingAsk ? { answer: message } : { message }
     const sent = sendJson(socketRef, payload)
     if (!sent) {
       applyServerEvent({ type: 'error', message: '聊天连接不可用，请稍后重试' })
+      unlockSending()
       return
     }
 
@@ -492,9 +516,15 @@ export function ChatPage() {
       return
     }
 
+    if (sendGuardRef.current || isBusySending) {
+      return
+    }
+
+    lockSending()
     const sent = sendJson(socketRef, { answer: normalized })
     if (!sent) {
       applyServerEvent({ type: 'error', message: '聊天连接不可用，请稍后重试' })
+      unlockSending()
       return
     }
 
@@ -776,19 +806,25 @@ export function ChatPage() {
         </p>
       ) : null}
 
+      {isBusySending ? (
+        <p role="status" className="status-inline">
+          正在发送，请稍候…
+        </p>
+      ) : null}
+
       <form className="chat-input" onSubmit={submit}>
         <button
           type="button"
           className="icon-button chat-input__icon-btn"
           aria-label="语音输入"
           onClick={startSpeech}
-          disabled={!hasSpeech}
+          disabled={!hasSpeech || isBusySending}
         >
           <MicIcon className="icon" />
         </button>
         <input aria-label="输入消息" value={draft} onChange={(event) => setDraft(event.target.value)} />
         {canSend ? (
-          <button type="submit" className="primary-button chat-input__action-btn" aria-label="发送消息">
+          <button type="submit" className="primary-button chat-input__action-btn" aria-label="发送消息" disabled={isBusySending}>
             <SendIcon className="icon" />
           </button>
         ) : (
@@ -797,6 +833,7 @@ export function ChatPage() {
             className="icon-button chat-input__action-btn"
             aria-label="添加附件"
             onClick={openAttachmentPicker}
+            disabled={isBusySending}
           >
             <PlusIcon className="icon" />
           </button>

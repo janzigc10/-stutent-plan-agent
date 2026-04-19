@@ -192,6 +192,45 @@ describe('ChatPage attachment drafting', () => {
     expect(screen.queryByRole('region', { name: '待发送附件' })).not.toBeInTheDocument()
   })
 
+  it('prevents duplicate attachment sends while upload is still in progress', async () => {
+    const user = userEvent.setup()
+    let resolveUpload:
+      | ((value: { file_id: string; kind: 'image'; count: number; source_file_count: number; courses: [] }) => void)
+      | null = null
+    const uploadSchedule = vi.spyOn(api, 'uploadSchedule').mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveUpload = resolve as typeof resolveUpload
+        }),
+    )
+
+    render(<ChatPage />)
+
+    const input = screen.getByLabelText('上传课表')
+    await user.upload(input, createFile('math-1.png', 'image/png'))
+
+    const sendButton = screen.getByRole('button', { name: '发送消息' })
+    fireEvent.click(sendButton)
+    fireEvent.click(sendButton)
+
+    expect(uploadSchedule).toHaveBeenCalledTimes(1)
+    expect(screen.getByText('正在发送，请稍候…')).toBeInTheDocument()
+
+    await act(async () => {
+      if (!resolveUpload) {
+        throw new Error('upload resolver not set')
+      }
+      resolveUpload({
+        file_id: 'schedule-file-dup',
+        kind: 'image',
+        count: 1,
+        source_file_count: 1,
+        courses: [],
+      })
+      await Promise.resolve()
+    })
+  })
+
   it('keeps pending attachments when upload fails on send', async () => {
     const user = userEvent.setup()
     vi.spyOn(api, 'uploadSchedule').mockRejectedValue(new Error('upload failed'))
