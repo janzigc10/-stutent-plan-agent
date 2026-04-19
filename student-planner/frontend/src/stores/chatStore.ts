@@ -27,6 +27,7 @@ export interface PendingAsk {
 
 export interface ChatStateSnapshot {
   messages: ChatMessage[]
+  streamingMessageId: string | null
   progress: ToolProgress[]
   progressAnchorMessageId: string | null
   pendingAsk: PendingAsk | null
@@ -38,7 +39,8 @@ export type ChatServerEvent =
   | { type: 'connected'; session_id: string }
   | { type: 'tool_call'; name: string; args?: unknown }
   | { type: 'tool_result'; name: string; result?: unknown }
-  | { type: 'text'; content: string }
+  | { type: 'text_delta'; delta: string; message_id?: string }
+  | { type: 'text'; content: string; message_id?: string }
   | { type: 'ask_user'; question: string; ask_type?: AskType; mode?: AskType; options?: string[]; data?: unknown }
   | { type: 'error'; message: string }
   | { type: 'done' }
@@ -69,6 +71,7 @@ function clearError(state: ChatStateSnapshot): ChatStateSnapshot {
 export function createInitialChatState(): ChatStateSnapshot {
   return {
     messages: [{ id: 'welcome', role: 'assistant', content: '你好！我是你的学习规划助手，有什么可以帮你的？' }],
+    streamingMessageId: null,
     progress: [],
     progressAnchorMessageId: null,
     pendingAsk: null,
@@ -81,6 +84,7 @@ export function reduceChatEvent(state: ChatStateSnapshot, event: ChatServerEvent
   if (event.type === 'connected') {
     return {
       ...clearError(state),
+      streamingMessageId: null,
       pendingAsk: null,
       progress: [],
       progressAnchorMessageId: null,
@@ -106,11 +110,47 @@ export function reduceChatEvent(state: ChatStateSnapshot, event: ChatServerEvent
     }
   }
 
-  if (event.type === 'text') {
+  if (event.type === 'text_delta') {
+    if (!event.delta) {
+      return state
+    }
+
+    const messageId = event.message_id ?? state.streamingMessageId ?? crypto.randomUUID()
     const shouldClearAnsweredAsk = Boolean(state.pendingAsk?.answered)
+    const messageIndex = state.messages.findIndex((message) => message.id === messageId)
+    const nextMessages: ChatMessage[] =
+      messageIndex >= 0
+        ? state.messages.map((message, index) =>
+            index === messageIndex
+              ? { ...message, role: 'assistant' as const, content: `${message.content}${event.delta}` }
+              : message,
+          )
+        : [...state.messages, { id: messageId, role: 'assistant' as const, content: event.delta }]
+
     return {
       ...clearError(state),
-      messages: [...state.messages, { id: crypto.randomUUID(), role: 'assistant', content: event.content }],
+      messages: nextMessages,
+      streamingMessageId: messageId,
+      pendingAsk: shouldClearAnsweredAsk ? null : state.pendingAsk,
+      isSending: true,
+    }
+  }
+
+  if (event.type === 'text') {
+    const messageId = event.message_id ?? state.streamingMessageId ?? crypto.randomUUID()
+    const shouldClearAnsweredAsk = Boolean(state.pendingAsk?.answered)
+    const messageIndex = state.messages.findIndex((message) => message.id === messageId)
+    const nextMessages: ChatMessage[] =
+      messageIndex >= 0
+        ? state.messages.map((message, index) =>
+            index === messageIndex ? { ...message, role: 'assistant' as const, content: event.content } : message,
+          )
+        : [...state.messages, { id: messageId, role: 'assistant' as const, content: event.content }]
+
+    return {
+      ...clearError(state),
+      messages: nextMessages,
+      streamingMessageId: null,
       pendingAsk: shouldClearAnsweredAsk ? null : state.pendingAsk,
     }
   }
@@ -121,11 +161,12 @@ export function reduceChatEvent(state: ChatStateSnapshot, event: ChatServerEvent
     const inlineReviewAsk = inferredType === 'review' && (event.options?.length ?? 0) === 0 && event.data == null
     return {
       ...clearError(state),
+      streamingMessageId: null,
       progress: [],
       progressAnchorMessageId: null,
       isSending: false,
       messages: inlineReviewAsk
-        ? [...state.messages, { id: crypto.randomUUID(), role: 'assistant', content: event.question }]
+        ? [...state.messages, { id: crypto.randomUUID(), role: 'assistant' as const, content: event.question }]
         : state.messages,
       pendingAsk: {
         question: event.question,
@@ -138,13 +179,21 @@ export function reduceChatEvent(state: ChatStateSnapshot, event: ChatServerEvent
   }
 
   if (event.type === 'error') {
-    return { ...state, error: event.message, isSending: false, progress: [], progressAnchorMessageId: null }
+    return {
+      ...state,
+      error: event.message,
+      isSending: false,
+      streamingMessageId: null,
+      progress: [],
+      progressAnchorMessageId: null,
+    }
   }
 
   if (event.type === 'done') {
     return {
       ...clearError(state),
       isSending: false,
+      streamingMessageId: null,
       progress: [],
       progressAnchorMessageId: null,
       pendingAsk: state.pendingAsk?.answered ? null : state.pendingAsk,
@@ -164,8 +213,9 @@ export const useChatStore = create<ChatStore>((set) => ({
   ...createInitialChatState(),
   appendUserMessage(content) {
     set((state) => ({
-      messages: [...state.messages, { id: crypto.randomUUID(), role: 'user', content }],
+      messages: [...state.messages, { id: crypto.randomUUID(), role: 'user' as const, content }],
       isSending: true,
+      streamingMessageId: null,
       error: null,
     }))
   },

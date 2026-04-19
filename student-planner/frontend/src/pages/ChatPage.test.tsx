@@ -445,6 +445,31 @@ describe('ChatPage attachment drafting', () => {
     expect(screen.getByText('1/1')).toBeInTheDocument()
   })
 
+  it('renders streamed assistant deltas as one growing message bubble', () => {
+    render(<ChatPage />)
+
+    act(() => {
+      useChatStore.getState().applyServerEvent({
+        type: 'text_delta',
+        message_id: 'stream-msg-1',
+        delta: 'Hello ',
+      })
+      useChatStore.getState().applyServerEvent({
+        type: 'text_delta',
+        message_id: 'stream-msg-1',
+        delta: 'world',
+      })
+      useChatStore.getState().applyServerEvent({
+        type: 'text',
+        message_id: 'stream-msg-1',
+        content: 'Hello world!',
+      })
+    })
+
+    expect(screen.getByText('Hello world!')).toBeInTheDocument()
+    expect(screen.queryAllByText('Hello world!')).toHaveLength(1)
+  })
+
   it('replaces the progress card with ask card when ask_user arrives', () => {
     const { container } = render(<ChatPage />)
 

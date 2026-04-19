@@ -133,4 +133,28 @@ describe('chat event reducer', () => {
     state = reduceChatEvent(state, { type: 'done' })
     expect(state.pendingAsk).toBeNull()
   })
+
+  it('builds assistant content incrementally from text_delta events', () => {
+    let state = createInitialChatState()
+
+    state = reduceChatEvent(state, { type: 'text_delta', message_id: 'stream-1', delta: 'Hello ' })
+    state = reduceChatEvent(state, { type: 'text_delta', message_id: 'stream-1', delta: 'world' })
+
+    expect(state.messages.at(-1)).toMatchObject({
+      id: 'stream-1',
+      role: 'assistant',
+      content: 'Hello world',
+    })
+  })
+
+  it('final text event with same message_id should not duplicate streamed message', () => {
+    let state = createInitialChatState()
+
+    state = reduceChatEvent(state, { type: 'text_delta', message_id: 'stream-2', delta: 'Hello ' })
+    state = reduceChatEvent(state, { type: 'text', message_id: 'stream-2', content: 'Hello world!' })
+
+    const streamedMessages = state.messages.filter((message) => message.id === 'stream-2')
+    expect(streamedMessages).toHaveLength(1)
+    expect(streamedMessages[0]?.content).toBe('Hello world!')
+  })
 })

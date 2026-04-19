@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, AsyncGenerator
 
 from openai import AsyncOpenAI
 
@@ -47,3 +47,80 @@ async def chat_completion(
         ]
 
     return result
+
+
+async def chat_completion_stream(
+    client: AsyncOpenAI,
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]] | None = None,
+) -> AsyncGenerator[dict[str, Any], None]:
+    """Stream chat completion chunks and emit a normalized final response."""
+    kwargs: dict[str, Any] = {
+        "model": settings.llm_model,
+        "messages": messages,
+        "max_tokens": settings.llm_max_tokens,
+        "temperature": settings.llm_temperature,
+        "stream": True,
+    }
+    if tools:
+        kwargs["tools"] = tools
+        kwargs["tool_choice"] = "auto"
+
+    stream = await client.chat.completions.create(**kwargs)
+
+    content_parts: list[str] = []
+    tool_calls_by_index: dict[int, dict[str, Any]] = {}
+
+    async for chunk in stream:
+        choices = getattr(chunk, "choices", None) or []
+        if not choices:
+            continue
+
+        choice = choices[0]
+        delta = getattr(choice, "delta", None)
+        if delta is None:
+            continue
+
+        content_delta = getattr(delta, "content", None)
+        if content_delta:
+            content_parts.append(content_delta)
+            yield {"type": "content_delta", "delta": content_delta}
+
+        for tool_call_delta in getattr(delta, "tool_calls", None) or []:
+            index = getattr(tool_call_delta, "index", None)
+            if index is None:
+                index = len(tool_calls_by_index)
+
+            tool_call = tool_calls_by_index.setdefault(
+                index,
+                {
+                    "id": f"call_{index}",
+                    "type": "function",
+                    "function": {"name": "", "arguments": ""},
+                },
+            )
+
+            tool_call_id = getattr(tool_call_delta, "id", None)
+            if tool_call_id:
+                tool_call["id"] = tool_call_id
+
+            function_delta = getattr(tool_call_delta, "function", None)
+            if function_delta is None:
+                continue
+
+            function_name = getattr(function_delta, "name", None)
+            if function_name:
+                tool_call["function"]["name"] += function_name
+
+            function_arguments = getattr(function_delta, "arguments", None)
+            if function_arguments:
+                tool_call["function"]["arguments"] += function_arguments
+
+    response: dict[str, Any] = {
+        "role": "assistant",
+        "content": "".join(content_parts) or None,
+    }
+    if tool_calls_by_index:
+        response["tool_calls"] = [tool_calls_by_index[index] for index in sorted(tool_calls_by_index)]
+
+    yield {"type": "response", "response": response}

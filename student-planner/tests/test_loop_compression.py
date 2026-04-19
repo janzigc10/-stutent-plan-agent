@@ -9,6 +9,15 @@ from app.agent.loop import run_agent_loop
 from app.models.user import User
 
 
+def stream_response_chunks(*, response: dict, deltas: list[str] | None = None):
+    async def _generator():
+        for delta in deltas or []:
+            yield {"type": "content_delta", "delta": delta}
+        yield {"type": "response", "response": response}
+
+    return _generator()
+
+
 @pytest.mark.asyncio
 async def test_loop_compresses_large_tool_result(setup_db):
     from tests.conftest import TestSession
@@ -22,7 +31,7 @@ async def test_loop_compresses_large_tool_result(setup_db):
             "slots": [
                 {
                     "date": f"2026-04-{day:02d}",
-                    "weekday": "周一",
+                    "weekday": "Monday",
                     "free_periods": [
                         {"start": "08:00", "end": "22:00", "duration_minutes": 840}
                     ],
@@ -30,42 +39,47 @@ async def test_loop_compresses_large_tool_result(setup_db):
                 }
                 for day in range(1, 8)
             ],
-            "summary": "2026-04-01 至 2026-04-07 共 7 个空闲段，总计 98 小时 0 分钟",
+            "summary": "7 free slots, 98 hours total",
         }
 
         call_count = 0
 
-        async def mock_chat_completion(client, messages, tools=None):
+        def mock_chat_completion_stream(client, messages, tools=None):
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                return {
-                    "role": "assistant",
-                    "content": None,
-                    "tool_calls": [
-                        {
-                            "id": "call_1",
-                            "type": "function",
-                            "function": {
-                                "name": "get_free_slots",
-                                "arguments": json.dumps(
-                                    {"start_date": "2026-04-01", "end_date": "2026-04-07"}
-                                ),
-                            },
-                        }
-                    ],
-                }
+                return stream_response_chunks(
+                    response={
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call_1",
+                                "type": "function",
+                                "function": {
+                                    "name": "get_free_slots",
+                                    "arguments": json.dumps(
+                                        {"start_date": "2026-04-01", "end_date": "2026-04-07"}
+                                    ),
+                                },
+                            }
+                        ],
+                    }
+                )
 
             tool_message = next(message for message in messages if message.get("role") == "tool")
             content = tool_message["content"]
             assert "free_periods" not in content
-            assert "7 个空闲段" in content
-            return {"role": "assistant", "content": "已经整理好了这段空闲时间。"}
+            assert "7" in content
+            return stream_response_chunks(
+                response={"role": "assistant", "content": "Summarized your availability."},
+                deltas=["Summarized ", "your availability."],
+            )
 
-        with patch("app.agent.loop.chat_completion", side_effect=mock_chat_completion):
+        with patch("app.agent.loop.chat_completion_stream", side_effect=mock_chat_completion_stream):
             with patch("app.agent.loop.execute_tool", new_callable=AsyncMock, return_value=large_result):
                 events = []
-                generator = run_agent_loop("帮我看看这周空闲时间", user, "test-session", db, AsyncMock())
+                generator = run_agent_loop("check this week's availability", user, "test-session", db, AsyncMock())
                 try:
                     event = await generator.__anext__()
                     while True:

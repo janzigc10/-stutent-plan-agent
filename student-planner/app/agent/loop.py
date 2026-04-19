@@ -1,4 +1,5 @@
 import json
+import uuid
 from typing import Any, AsyncGenerator
 
 from sqlalchemy import select
@@ -11,7 +12,7 @@ from app.agent.guardrails import (
     check_max_retries,
     check_unknown_tool,
 )
-from app.agent.llm_client import AsyncOpenAI, chat_completion
+from app.agent.llm_client import AsyncOpenAI, chat_completion, chat_completion_stream
 from app.agent.prompt import build_system_prompt
 from app.agent.tool_executor import execute_tool
 from app.agent.tools import TOOL_DEFINITIONS
@@ -76,12 +77,47 @@ async def run_agent_loop(
 
     for iteration in range(MAX_ITERATIONS):
         check_max_loop_iterations(iteration, MAX_ITERATIONS)
-        response = await chat_completion(llm_client, messages, tools=TOOL_DEFINITIONS)
+        response: dict[str, Any] | None = None
+        response_message_id = str(uuid.uuid4())
+        streamed_delta_count = 0
+        try:
+            async for stream_event in chat_completion_stream(
+                llm_client,
+                messages,
+                tools=TOOL_DEFINITIONS,
+            ):
+                event_type = stream_event.get("type")
+                if event_type == "content_delta":
+                    delta = str(stream_event.get("delta") or "")
+                    if not delta:
+                        continue
+                    streamed_delta_count += 1
+                    yield {
+                        "type": "text_delta",
+                        "message_id": response_message_id,
+                        "delta": delta,
+                    }
+                    continue
+
+                if event_type == "response":
+                    response = stream_event.get("response")
+        except Exception:
+            if streamed_delta_count > 0:
+                raise
+            response = await chat_completion(llm_client, messages, tools=TOOL_DEFINITIONS)
+            response_message_id = str(uuid.uuid4())
+
+        if response is None:
+            raise RuntimeError("chat completion stream finished without a response payload")
 
         if "tool_calls" not in response:
             text = response.get("content", "")
             if text:
-                yield {"type": "text", "content": text}
+                yield {
+                    "type": "text",
+                    "message_id": response_message_id,
+                    "content": text,
+                }
                 await _save_message(db, session_id, "assistant", text)
             yield {"type": "done"}
             return
@@ -124,7 +160,7 @@ async def run_agent_loop(
                 ask_type = _normalize_ask_type(result)
                 user_response = yield {**result, "type": "ask_user", "ask_type": ask_type}
                 if user_response is None:
-                    user_response = "确认"
+                    user_response = "纭"
                 tool_result_content = json.dumps({"user_response": user_response}, ensure_ascii=False)
             else:
                 result = await execute_tool(tool_name, tool_args, db, user.id)
