@@ -394,6 +394,47 @@ a {
   color: #fff;
 }
 
+.message--upload-receipt {
+  min-width: 192px;
+}
+
+.message__upload-receipt {
+  display: grid;
+  gap: 6px;
+}
+
+.message__upload-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  border: 1px solid rgba(255, 255, 255, 0.34);
+  background: rgba(255, 255, 255, 0.16);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.icon--xs {
+  width: 14px;
+  height: 14px;
+}
+
+.message__upload-main {
+  margin: 0;
+  font-size: var(--fs-lg);
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.message__upload-sub {
+  margin: 0;
+  font-size: var(--fs-xs);
+  opacity: 0.9;
+}
+
 .progress-card,
 .ask-card,
 .attachment-tray,

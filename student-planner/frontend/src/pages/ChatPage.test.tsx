@@ -187,6 +187,8 @@ describe('ChatPage attachment drafting', () => {
       }),
     )
     expect(await screen.findByText('已发送 2 张课表图片')).toBeInTheDocument()
+    expect(screen.getByText('课表图片')).toBeInTheDocument()
+    expect(screen.getByText('共 2 张，等待助手解析')).toBeInTheDocument()
     expect(screen.queryByRole('region', { name: '待发送附件' })).not.toBeInTheDocument()
   })
 
@@ -236,6 +238,8 @@ describe('ChatPage attachment drafting', () => {
       }),
     )
     expect(await screen.findByText('已发送 1 个课表文件')).toBeInTheDocument()
+    expect(screen.getByText('课表文件')).toBeInTheDocument()
+    expect(screen.getByText('共 1 个，等待助手解析')).toBeInTheDocument()
     expect(screen.queryByText('schedule.xlsx')).not.toBeInTheDocument()
   })
 
@@ -366,6 +370,7 @@ describe('ChatPage attachment drafting', () => {
     await user.click(screen.getByRole('button', { name: 'Confirm' }))
 
     expect(screen.getByText('已选择：Confirm')).toBeInTheDocument()
+    expect(screen.getByText('正在继续处理，请稍候…')).toBeInTheDocument()
     expect(screen.queryByRole('progressbar')).not.toBeInTheDocument()
   })
 
@@ -415,6 +420,43 @@ describe('ChatPage attachment drafting', () => {
 
     expect(screen.queryByRole('progressbar')).not.toBeInTheDocument()
     expect(container.querySelector('.ask-card')).toBeTruthy()
+  })
+
+  it('keeps progress card after the welcome message in timeline order', () => {
+    const { container } = render(<ChatPage />)
+
+    act(() => {
+      useChatStore.getState().applyServerEvent({
+        type: 'tool_call',
+        name: 'parse_schedule',
+      })
+    })
+
+    const progressCard = container.querySelector('.progress-card')
+    const welcomeMessage = screen.getByText('你好！我是你的学习规划助手，有什么可以帮你的？')
+
+    expect(progressCard).toBeTruthy()
+    expectNodeBefore(welcomeMessage, progressCard as HTMLElement)
+  })
+
+  it('keeps ask card after the welcome message in timeline order', () => {
+    const { container } = render(<ChatPage />)
+
+    act(() => {
+      useChatStore.getState().applyServerEvent({
+        type: 'ask_user',
+        question: '请确认解析结果',
+        ask_type: 'confirm',
+        options: ['确认', '取消'],
+        data: { count: 21 },
+      })
+    })
+
+    const askCard = container.querySelector('.ask-card')
+    const welcomeMessage = screen.getByText('你好！我是你的学习规划助手，有什么可以帮你的？')
+
+    expect(askCard).toBeTruthy()
+    expectNodeBefore(welcomeMessage, askCard as HTMLElement)
   })
 
   it('renders schedule review ask data as readable course cards instead of raw JSON', () => {
@@ -484,6 +526,32 @@ describe('ChatPage attachment drafting', () => {
     expect(screen.getByText('专业综合实践II')).toBeInTheDocument()
     expect(screen.getByText(/会展-315/)).toBeInTheDocument()
     expect(screen.queryByText('未命名课程')).not.toBeInTheDocument()
+  })
+
+  it('renders serialized Chinese course list strings as readable schedule cards', () => {
+    render(<ChatPage />)
+
+    act(() => {
+      useChatStore.getState().applyServerEvent({
+        type: 'ask_user',
+        question: '以下是从文件中识别出的课表，请确认是否导入？',
+        ask_type: 'review',
+        options: ['确认', '取消'],
+        data: {
+          共识别课程条目: 2,
+          课程列表:
+            '周次:第1周；地点:会展-315(校企工坊)；教师:张志英；时间:10:20-11:55；星期:周二；课程:专业综合实践II，周次:第2-9周；地点:励志楼C202；教师:宋元跃；时间:18:45-20:25；星期:周二；课程:大学生就业指导',
+        },
+      })
+    })
+
+    expect(screen.getByLabelText('识别课程列表')).toBeInTheDocument()
+    expect(screen.getByText('专业综合实践II')).toBeInTheDocument()
+    expect(screen.getByText('大学生就业指导')).toBeInTheDocument()
+    expect(screen.getByText('周二 · 10:20-11:55')).toBeInTheDocument()
+    expect(screen.getByText('会展-315(校企工坊) · 张志英 · 第1周')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '确认' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '取消' })).toBeInTheDocument()
   })
 
   it('renders non-schedule review data as key-value rows instead of a JSON blob', () => {

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ChangeEvent, FormEvent, MutableRefObject } from 'react'
 
 import { api, getStoredToken } from '../api/client'
-import { MicIcon, PlusIcon, SendIcon } from '../components/icons'
+import { MicIcon, PaperclipIcon, PlusIcon, SendIcon } from '../components/icons'
 import type { ChatServerEvent, PendingAsk, ToolProgress } from '../stores/chatStore'
 import { useChatStore } from '../stores/chatStore'
 
@@ -30,6 +30,16 @@ interface CoursePreview {
 const CHAT_RESPONSE_TIMEOUT_MS = 30000
 const DEFAULT_CONFIRM_OPTIONS = ['确认', '取消']
 const WEEKDAY_LABELS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
+const COURSE_ENTRY_KEYS = ['courses', 'course_list', 'courseList', '课程列表', '课程清单', '课表列表'] as const
+const REVIEW_COUNT_KEYS = ['count', 'course_count', 'courseCount', 'total', '共识别课程条目', '识别课程数', '课程数量'] as const
+
+type UploadReceiptKind = 'image' | 'spreadsheet'
+
+interface UploadReceiptMeta {
+  kind: UploadReceiptKind
+  count: number
+  text: string
+}
 
 function wsUrl() {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
@@ -52,6 +62,23 @@ function buildAttachmentPrompt(fileId: string, kind: AttachmentKind) {
 
 function buildAttachmentConfirmation(kind: AttachmentKind, count: number) {
   return kind === 'image' ? `已发送 ${count} 张课表图片` : '已发送 1 个课表文件'
+}
+
+function parseUploadReceipt(content: string): UploadReceiptMeta | null {
+  const parsed = content.match(/^已发送\s+(\d+)\s+(张课表图片|个课表文件)$/)
+  if (!parsed) {
+    return null
+  }
+  const count = Number(parsed[1])
+  if (!Number.isInteger(count) || count <= 0) {
+    return null
+  }
+  const typeText = parsed[2]
+  return {
+    kind: typeText.includes('图片') ? 'image' : 'spreadsheet',
+    count,
+    text: content,
+  }
 }
 
 function detectAttachmentKind(file: File): AttachmentKind | null {
@@ -123,13 +150,75 @@ function getCourseEntries(data: unknown): unknown[] | null {
   if (!data || typeof data !== 'object') {
     return null
   }
-  const courses = (data as { courses?: unknown }).courses
-  return Array.isArray(courses) ? courses : null
+  const record = data as Record<string, unknown>
+  for (const key of COURSE_ENTRY_KEYS) {
+    const value = record[key]
+    if (Array.isArray(value)) {
+      return value
+    }
+    if (typeof value === 'string') {
+      const chunks = value
+        .replace(/\r\n/g, '\n')
+        .split('\n')
+        .map((item) => item.trim())
+        .filter(Boolean)
+      if (chunks.length > 1) {
+        return chunks
+      }
+      const rows = value
+        .split(/，(?=周次[:：])/)
+        .map((item) => item.trim())
+        .filter(Boolean)
+      if (rows.length > 0) {
+        return rows
+      }
+    }
+  }
+  return null
+}
+
+function pickSerializedField(text: string, keys: string[]) {
+  for (const key of keys) {
+    const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const match = text.match(new RegExp(`${escaped}\\s*[:：]\\s*([^；;，,\\n]+)`))
+    if (match?.[1]) {
+      return match[1].trim()
+    }
+  }
+  return null
+}
+
+function reviewCountFromData(data: unknown) {
+  if (!data || typeof data !== 'object') {
+    return null
+  }
+  const record = data as Record<string, unknown>
+  for (const key of REVIEW_COUNT_KEYS) {
+    const numericCount = Number(record[key])
+    if (Number.isFinite(numericCount) && numericCount > 0) {
+      return numericCount
+    }
+  }
+  return null
 }
 
 function toCoursePreview(entry: unknown, index: number): CoursePreview {
   if (typeof entry === 'string') {
-    return { name: entry.trim() || `课程 ${index + 1}`, timeLine: null, metaLine: null }
+    const raw = entry.trim()
+    if (!raw) {
+      return { name: `课程 ${index + 1}`, timeLine: null, metaLine: null }
+    }
+    const name = pickSerializedField(raw, ['课程', '课程名', '课程名称', '科目']) ?? raw
+    const weekday = pickSerializedField(raw, ['星期', '周几', 'weekday'])
+    const time = pickSerializedField(raw, ['时间', 'time'])
+    const location = pickSerializedField(raw, ['地点', '教室', 'location'])
+    const teacher = pickSerializedField(raw, ['教师', '老师', 'teacher'])
+    const weekRange = pickSerializedField(raw, ['周次', '周数', 'week', 'week_range'])
+    const timeLine = weekday && time ? `${weekday} · ${time}` : time ?? weekday ?? null
+    const metaParts = [location, teacher, weekRange].filter((part): part is string => Boolean(part))
+    const metaLine = metaParts.length > 0 ? metaParts.join(' · ') : null
+
+    return { name, timeLine, metaLine }
   }
   if (!entry || typeof entry !== 'object') {
     return {
@@ -250,15 +339,17 @@ export function ChatPage() {
   const hasSpeech = typeof window !== 'undefined' && 'webkitSpeechRecognition' in window
   const inlineTextAsk = isInlineTextAsk(pendingAsk)
   const shouldRenderAskCard = pendingAsk !== null && !inlineTextAsk && !(pendingAsk.answered && progress.length > 0)
+  const isAskBridgePending = Boolean(pendingAsk?.answered && isSending && progress.length === 0)
 
   const messageOrderMap = useMemo(
     () => new Map(messages.map((message, index) => [message.id, (index + 1) * 10])),
     [messages],
   )
   const tailOrder = messages.length > 0 ? messages.length * 10 : 0
-  const askCardOrder = shouldRenderAskCard ? anchorOrder(pendingAsk.anchorMessageId, messageOrderMap, tailOrder, 0.2) : null
+  // CSS `order` only accepts integers; keep cards on integer slots between messages.
+  const askCardOrder = shouldRenderAskCard ? anchorOrder(pendingAsk.anchorMessageId, messageOrderMap, tailOrder, 2) : null
   const progressCardOrder =
-    progress.length > 0 ? anchorOrder(progressAnchorMessageId, messageOrderMap, tailOrder, 0.1) : null
+    progress.length > 0 ? anchorOrder(progressAnchorMessageId, messageOrderMap, tailOrder, 1) : null
   const progressInfo = useMemo(() => progressSummary(progress), [progress])
   const canSend = draft.trim().length > 0 || pendingAttachments.length > 0
 
@@ -277,12 +368,9 @@ export function ChatPage() {
     if (!pendingAsk || pendingAsk.type !== 'review' || pendingAsk.data == null || !coursePreviews) {
       return coursePreviews?.length ?? 0
     }
-    if (typeof pendingAsk.data === 'object' && pendingAsk.data !== null) {
-      const rawCount = (pendingAsk.data as { count?: unknown }).count
-      const numericCount = Number(rawCount)
-      if (Number.isFinite(numericCount) && numericCount > 0) {
-        return numericCount
-      }
+    const parsedCount = reviewCountFromData(pendingAsk.data)
+    if (parsedCount !== null) {
+      return parsedCount
     }
     return coursePreviews.length
   }, [coursePreviews, pendingAsk])
@@ -492,13 +580,33 @@ export function ChatPage() {
     <main className="page chat-page">
       <div className="message-list">
         {messages.map((message, index) => (
-          <div
-            className={`message message--${message.role}`}
-            key={message.id}
-            style={{ order: (index + 1) * 10 }}
-          >
-            {message.content}
-          </div>
+          (() => {
+            const uploadReceipt = message.role === 'user' ? parseUploadReceipt(message.content) : null
+            return (
+              <div
+                className={`message message--${message.role}${uploadReceipt ? ' message--upload-receipt' : ''}`}
+                key={message.id}
+                style={{ order: (index + 1) * 10 }}
+              >
+                {uploadReceipt ? (
+                  <div className="message__upload-receipt">
+                    <span className="message__upload-tag">
+                      <PaperclipIcon className="icon icon--xs" />
+                      {uploadReceipt.kind === 'image' ? '课表图片' : '课表文件'}
+                    </span>
+                    <strong className="message__upload-main">{uploadReceipt.text}</strong>
+                    <span className="message__upload-sub">
+                      {uploadReceipt.kind === 'image'
+                        ? `共 ${uploadReceipt.count} 张，等待助手解析`
+                        : `共 ${uploadReceipt.count} 个，等待助手解析`}
+                    </span>
+                  </div>
+                ) : (
+                  message.content
+                )}
+              </div>
+            )
+          })()
         ))}
 
         {progress.length > 0 && progressCardOrder !== null ? (
@@ -539,7 +647,11 @@ export function ChatPage() {
         ) : null}
 
         {shouldRenderAskCard && askCardOrder !== null && pendingAsk ? (
-          <section className="ask-card" aria-label="需要确认" style={{ order: askCardOrder }}>
+          <section
+            className={`ask-card${pendingAsk.answered ? ' ask-card--answered' : ''}`}
+            aria-label="需要确认"
+            style={{ order: askCardOrder }}
+          >
             <p>{pendingAsk.question}</p>
 
             {pendingAsk.type === 'review' && pendingAsk.data != null ? (
@@ -582,7 +694,15 @@ export function ChatPage() {
             ) : null}
 
             {pendingAsk.answered ? (
-              <p>已选择：{pendingAsk.answered}</p>
+              <div className="ask-card__answered" role={isAskBridgePending ? 'status' : undefined} aria-live="polite">
+                <p className="ask-card__answered-title">已选择：{pendingAsk.answered}</p>
+                {isAskBridgePending ? (
+                  <p className="ask-card__answered-hint">
+                    <span className="ask-card__answered-dot" aria-hidden="true" />
+                    正在继续处理，请稍候…
+                  </p>
+                ) : null}
+              </div>
             ) : (
               <div className="ask-card__actions">
                 {pendingAsk.type === 'confirm' ? (
