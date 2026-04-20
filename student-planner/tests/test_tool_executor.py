@@ -48,6 +48,45 @@ async def test_add_and_list_course(setup_db):
 
 
 @pytest.mark.asyncio
+async def test_update_course_changes_name(setup_db):
+    async with TestSession() as db:
+        user = User(id="user-update-1", username="test-update", hashed_password="x")
+        db.add(user)
+        await db.commit()
+
+        created = await execute_tool(
+            "add_course",
+            {
+                "name": "机器人程序动化",
+                "weekday": 3,
+                "start_time": "10:20",
+                "end_time": "11:55",
+                "week_pattern": "even",
+            },
+            db,
+            "user-update-1",
+        )
+        assert created["status"] == "created"
+
+        updated = await execute_tool(
+            "update_course",
+            {
+                "course_id": created["id"],
+                "name": "机器人流程自动化",
+            },
+            db,
+            "user-update-1",
+        )
+        assert updated["status"] == "updated"
+        assert updated["name"] == "机器人流程自动化"
+
+        result = await execute_tool("list_courses", {}, db, "user-update-1")
+        assert result["count"] == 1
+        assert result["courses"][0]["name"] == "机器人流程自动化"
+        assert result["courses"][0]["week_pattern"] == "even"
+
+
+@pytest.mark.asyncio
 async def test_ask_user_returns_action(setup_db):
     async with TestSession() as db:
         result = await execute_tool(

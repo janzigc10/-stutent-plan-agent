@@ -14,11 +14,62 @@ function weekdayForDate(date: string) {
   return day === 0 ? 7 : day
 }
 
-export function eventsForDate(date: string, courses: Course[], tasks: Task[]): CalendarEvent[] {
+function parseDate(date: string | null | undefined) {
+  if (!date) {
+    return null
+  }
+  const parsed = new Date(`${date}T00:00:00`)
+  return Number.isNaN(parsed.getTime()) ? null : parsed
+}
+
+function teachingWeekForDate(date: string, semesterStart: string | null | undefined) {
+  const currentDate = parseDate(date)
+  const semesterStartDate = parseDate(semesterStart)
+  if (!currentDate || !semesterStartDate) {
+    return semesterStartDate ? null : undefined
+  }
+  const millisecondsPerDay = 24 * 60 * 60 * 1000
+  const diffDays = Math.floor((currentDate.getTime() - semesterStartDate.getTime()) / millisecondsPerDay)
+  if (diffDays < 0) {
+    return null
+  }
+  return Math.floor(diffDays / 7) + 1
+}
+
+export function courseOccursOnDate(course: Course, date: string, semesterStart?: string | null) {
+  if (course.weekday !== weekdayForDate(date)) {
+    return false
+  }
+
+  const teachingWeek = teachingWeekForDate(date, semesterStart)
+  if (teachingWeek === null) {
+    return false
+  }
+  if (typeof teachingWeek === 'number') {
+    if (teachingWeek < course.week_start || teachingWeek > course.week_end) {
+      return false
+    }
+    if (course.week_pattern === 'odd' && teachingWeek % 2 === 0) {
+      return false
+    }
+    if (course.week_pattern === 'even' && teachingWeek % 2 !== 0) {
+      return false
+    }
+  }
+
+  return true
+}
+
+export function eventsForDate(
+  date: string,
+  courses: Course[],
+  tasks: Task[],
+  semesterStart?: string | null,
+): CalendarEvent[] {
   const weekday = weekdayForDate(date)
   return [
     ...courses
-      .filter((course) => course.weekday === weekday)
+      .filter((course) => course.weekday === weekday && courseOccursOnDate(course, date, semesterStart))
       .map((course) => ({
         kind: 'course' as const,
         id: course.id,
@@ -59,6 +110,7 @@ interface CalendarStore {
   setViewMode: (mode: CalendarViewMode) => void
   setCurrentDate: (date: string) => void
   shiftDate: (days: number) => void
+  shiftMonth: (months: number) => void
   load: () => Promise<void>
   completeTask: (taskId: string) => Promise<void>
   createTask: (body: Parameters<typeof api.createTask>[0]) => Promise<void>
@@ -81,6 +133,19 @@ export const useCalendarStore = create<CalendarStore>((set, get) => ({
     const next = new Date(`${get().currentDate}T00:00:00`)
     next.setDate(next.getDate() + days)
     set({ currentDate: toDateString(next) })
+    void get().load()
+  },
+  shiftMonth(months) {
+    const [year, month, day] = get().currentDate.split('-').map((value) => Number(value))
+    if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) {
+      return
+    }
+    const target = new Date(year, month - 1 + months, 1)
+    const targetYear = target.getFullYear()
+    const targetMonth = target.getMonth()
+    const daysInTargetMonth = new Date(targetYear, targetMonth + 1, 0).getDate()
+    const nextDay = Math.min(day, daysInTargetMonth)
+    set({ currentDate: toDateString(new Date(targetYear, targetMonth, nextDay)) })
     void get().load()
   },
   async load() {

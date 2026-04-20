@@ -161,6 +161,7 @@ AI 驱动的学生时间规划 Agent，核心功能：课前提醒 + AI 任务�
 
 ## 问题记录（晚间补充）
 - 2026-04-18: IAB/本地撤销可能把 `ChatPage.tsx` 写入 Git 冲突标记，导致前端编译失败。已恢复并补测通过；后续若再次出现，优先全局检索 `<<<<<<<|=======|>>>>>>>`。
+- 2026-04-20: 本地开发库 `student_planner.db` 曾处于旧版 `9f3e2d4a1b6c` schema（`courses.week_type`），与当前代码读取的 `week_pattern/week_text` 不兼容，导致课程查询统一报 `sqlite3.OperationalError: no such column: courses.week_pattern`。已通过兼容迁移 `c4c3b8a92f1d` 修复并执行本地升级。
 ## Session Update (2026-04-19, Streaming Output)
 - Completed chat streaming output end-to-end: backend now emits `text_delta` chunks with a stable `message_id`, and emits final `text` with the same `message_id` for deduplicated finalization.
 - Added streaming support in `student-planner/app/agent/llm_client.py` via `chat_completion_stream`.
@@ -177,5 +178,167 @@ AI 驱动的学生时间规划 Agent，核心功能：课前提醒 + AI 任务�
   - `npm --prefix frontend test -- src/stores/chatStore.test.ts src/pages/ChatPage.test.tsx` (40 passed)
   - `npm --prefix frontend run build` (PASS)
 
-## Current Focus (after streaming)
-- Next priority remains image upload parse async backend tasking (move sync vision parse out of request path, push progress via WS/polling).
+## Session Update (2026-04-20, Async Image Parse Backend)
+- Completed image-upload async backend tasking for schedule screenshots:
+  - `POST /api/schedule/upload` now returns immediately for image batches with `status=processing` and a `file_id`.
+  - Image OCR parsing moved to background tasks; upload cache now tracks `status/progress/error/source_file_count`.
+  - Added status polling endpoint: `GET /api/schedule/upload/{file_id}`.
+  - Tool-layer behavior updated: `parse_schedule_image` now returns structured `processing` / `failed` states instead of hard errors when background parse is not ready.
+- Added/updated regression coverage:
+  - `student-planner/tests/test_schedule_import_api.py`
+  - `student-planner/tests/test_schedule_tools.py`
+- Verification:
+  - `py -3.12 -m pytest tests/test_schedule_import_api.py tests/test_schedule_tools.py -q` (19 passed)
+  - `py -3.12 -m pytest tests/test_schedule_upload_cache.py tests/test_schedule_import_api.py tests/test_schedule_tools.py tests/test_schedule_integration.py -q` (23 passed)
+  - `py -3.12 -m pytest -q` (178 passed)
+  - `npm --prefix frontend test -- src/pages/ChatPage.test.tsx src/stores/chatStore.test.ts` (40 passed)
+  - `npm --prefix frontend run build` (PASS)
+
+## Current Focus (after async image parse backend)
+- Next priority: frontend polling / WS progress consumption for image parse status, so users can see real backend progress and auto-continue to confirmation without manual retry.
+
+## Session Update (2026-04-20, Calendar Week Filtering + Persistence)
+- Completed the previously deferred schedule-import calendar regression fix end-to-end:
+  - `frontend/src/stores/calendarStore.ts::eventsForDate` now filters course events by `current_semester_start`, teaching-week index, `week_start/week_end`, and `week_pattern`.
+  - `frontend/src/pages/CalendarPage.tsx` month view now uses the same per-date course activation logic, so pre-semester dates and off-parity weeks no longer show course dots.
+  - Backend `Course` model/schema/API and agent bulk-import/add-course/list-course paths now persist and return `week_pattern/week_text`.
+  - Added Alembic migration `student-planner/alembic/versions/9f3e2d4a1b6c_add_course_week_type.py` to backfill the new course columns into existing environments.
+- Added/updated regression coverage:
+  - `student-planner/tests/test_courses.py`
+  - `student-planner/tests/test_bulk_import.py`
+  - `student-planner/frontend/src/stores/calendarStore.test.ts`
+  - `student-planner/frontend/src/pages/CalendarPage.test.tsx`
+- Verification:
+  - `py -3.12 -m pytest tests/test_courses.py tests/test_bulk_import.py -q` (11 passed)
+  - `npm --prefix frontend test -- src/stores/calendarStore.test.ts src/pages/CalendarPage.test.tsx` (11 passed)
+  - `py -3.12 -m pytest -q` (186 passed)
+  - `npm --prefix frontend test` (65 passed)
+  - `npm --prefix frontend run build` (PASS)
+
+## Session Update (2026-04-20, Legacy DB Schema Repair)
+- Resolved a local runtime regression that appeared immediately after service restart:
+  - Calendar page showed `Internal Server Error`.
+  - Chat page appeared to hang right after sending a schedule attachment.
+- Root cause:
+  - The local dev database `student_planner.db` had already been migrated to an older revision `9f3e2d4a1b6c` that created `courses.week_type`.
+  - New application code now queries `courses.week_pattern/week_text`, so any course query failed with `sqlite3.OperationalError: no such column: courses.week_pattern`.
+  - This broke both calendar course loading and chat system-prompt/context assembly, because chat also reads today's courses before starting the loop.
+- Fix:
+  - Added compatibility migration `student-planner/alembic/versions/c4c3b8a92f1d_repair_course_week_columns.py`.
+  - Migration behavior: detect legacy `week_type`, add missing `week_pattern/week_text`, backfill data, and advance Alembic head.
+  - Executed `py -3.12 -m alembic upgrade head` locally.
+  - Restarted backend and frontend after migration.
+- Verification:
+  - Direct SQLAlchemy query against `Course` now succeeds on the local dev DB.
+  - `PRAGMA table_info(courses)` confirms `week_pattern` and `week_text` now exist.
+  - Backend `/health` returns OK after restart.
+
+## Session Update (2026-04-20, Calendar Desktop Paging Controls)
+- Added a temporary desktop-friendly paging entry for calendar verification:
+  - top bar now shows previous / next arrow buttons on the calendar page
+  - buttons shift by day in day view and by month in month view
+  - existing swipe paging remains unchanged for touch devices
+- Refactor:
+  - moved `shiftMonth` into `student-planner/frontend/src/stores/calendarStore.ts`
+  - `student-planner/frontend/src/pages/CalendarPage.tsx` now reuses the shared store paging action
+  - `student-planner/frontend/src/components/AppShell.tsx` now owns the desktop paging controls
+- Verification:
+  - `npm --prefix frontend test -- src/components/AppShell.test.tsx` (6 passed)
+  - `npm --prefix frontend test -- src/pages/CalendarPage.test.tsx src/stores/calendarStore.test.ts src/components/AppShell.test.tsx` (17 passed)
+  - `npm --prefix frontend run build` (PASS)
+
+## Session Update (2026-04-20, Silent Consecutive ask_user Guardrail)
+- Reproduced the user-reported chat regression against the live local backend using the same schedule-image message pattern:
+  - after one `ask_user` answer, the model briefly planned another `ask_user` before `save_period_times`
+  - the guardrail correctly blocked it, but the backend also emitted the guardrail error event to the frontend
+  - result: UI popped “不能连续两次调用 ask_user”，while the agent then continued with valid tools and completed the flow
+- Fix:
+  - `student-planner/app/agent/guardrails.py` now marks the consecutive-`ask_user` violation as internal-only (`user_visible=False`)
+  - `student-planner/app/agent/loop.py` still feeds that violation back into the model as a tool error for self-correction, but no longer forwards it to the user UI
+- Regression coverage:
+  - added `tests/test_agent_loop.py::test_consecutive_ask_user_violation_is_not_sent_to_user`
+- Verification:
+  - `py -3.12 -m pytest tests/test_agent_loop.py -q` (7 passed)
+  - `py -3.12 -m pytest tests/test_agent_loop.py tests/test_chat_ws.py -q` (11 passed)
+
+## Session Update (2026-04-20, Chat Tool-Preamble Leak + Course-Rename Loop)
+- Reproduced the user-reported "infinite loop" on the live local data path:
+  - session `78d549b2-8bd1-4467-9ae1-f867fd4ed38c` repeatedly called `list_courses` 9 times from `2026-04-20 09:37:56` through `2026-04-20 09:38:32`
+  - the repeated small white bubbles such as "让我先查一下你的课表" were not normal final replies; they were streamed tool-preamble text leaking to the UI before the model switched into a tool call
+- Root cause split into two layers:
+  - streaming layer bug: `app/agent/loop.py` forwarded `text_delta` chunks immediately, even when the final streamed response actually contained `tool_calls`
+  - action-space gap: the agent had `list_courses/add_course/delete_course` but lacked `update_course`, so OCR course-name correction / merge requests could degenerate into repeated `list_courses`
+- Fix:
+  - `student-planner/app/agent/loop.py` now buffers streamed deltas and only emits them when the final response is a pure text answer; if the final response contains `tool_calls`, the preamble deltas are dropped instead of surfacing to the frontend
+  - `student-planner/app/agent/tools.py` added `update_course`
+  - `student-planner/app/agent/tool_executor.py` added `_update_course(...)` and registered the handler so existing course records can be renamed / corrected without delete-and-recreate loops
+- Regression coverage:
+  - added `tests/test_agent_loop.py::test_streaming_preamble_is_not_emitted_when_response_uses_tool_calls`
+  - added `tests/test_tool_executor.py::test_update_course_changes_name`
+  - updated `tests/test_tools_schema.py` to require `update_course`
+- Verification:
+  - `py -3.12 -m pytest tests/test_agent_loop.py tests/test_tool_executor.py tests/test_tools_schema.py tests/test_chat_ws.py -q` (20 passed)
+
+## Session Update (2026-04-20, Local Course-Merge Shortcut)
+- Follow-up investigation showed that prompt-only guidance was not sufficient for the user-reported "merge duplicate courses into one" path:
+  - the old loop could still drift into generic greeting / upload-file guidance instead of operating on the current timetable
+  - the problematic path was specifically "current timetable duplicate cleanup", not schedule import
+- Fix:
+  - `student-planner/app/agent/loop.py` now has a narrow local shortcut for existing-course merge/correction requests
+  - when the user says the calendar still shows duplicate courses, the loop now:
+    - asks which course names should be merged
+    - calls `list_courses` exactly once
+    - builds a per-timeslot merge plan
+    - asks for final confirmation
+    - applies `delete_course` / `update_course` directly without handing this branch back to the LLM
+  - merge grouping now preserves distinct `week_pattern/week_start/week_end` variants, so odd/even-week records are not accidentally collapsed into one row
+- Prompting support also tightened:
+  - `student-planner/Agent.md` now explicitly documents current-timetable correction flows (`list_courses` -> confirm -> `update_course` / `delete_course`)
+  - `student-planner/app/agent/tools.py` descriptions now call out existing-course correction use cases
+- Regression coverage:
+  - added routing-hint tests in `tests/test_agent_loop.py`
+  - added `tests/test_agent_loop.py::test_course_merge_shortcut_collapses_duplicate_courses_without_llm`
+  - added `tests/test_agent_loop.py::test_course_merge_shortcut_preserves_distinct_week_patterns`
+- Verification:
+  - `py -3.12 -m pytest tests/test_agent_loop.py -q` (13 passed)
+  - `py -3.12 -m pytest tests/test_agent_loop.py tests/test_chat_ws.py tests/test_tool_executor.py tests/test_tools_schema.py -q` (25 passed)
+  - live websocket replay against a cloned copy of the real problematic timetable now shows:
+    - one initial `ask_user` to identify the duplicate course names
+    - exactly one `list_courses`
+    - one confirmation step
+    - only bounded `delete_course` calls for the matched duplicate records
+    - no repeated `list_courses` loop and no leaked tool-preamble bubbles
+
+## Deferred Issue Note (2026-04-20, OCR Review Card Rendering)
+- New user-reported frontend regression after uploading schedule images:
+  - after image OCR, the assistant bubble rendered a very large mixed block containing the full parsed summary plus inline table-like text
+  - the confirmation card below looked malformed / partially desynced from the summary text:
+    - summary text said "从图片中识别出的 9 条课程记录" and "去重后共 8 条"
+    - the review card header showed `识别课程 8`
+    - card content appeared truncated / misaligned, with one item area looking incomplete and the whole interaction visually crowded
+  - user screenshot suggests the review payload may be simultaneously rendered in two different formats:
+    - once as a long natural-language summary in the assistant bubble
+    - once again as the structured `ask_user(type="review")` card
+- Status:
+  - recorded for next session handoff only; not root-caused or fixed in this session
+- Recommended next-session investigation:
+  - inspect `frontend/src/pages/ChatPage.tsx` review-card rendering path for schedule-import OCR confirmation
+  - compare the actual websocket `ask_user` payload with the assistant text immediately preceding it
+  - verify whether OCR confirmation is duplicating both:
+    - a human-readable pre-summary message
+    - a second structured review dataset containing the same courses
+  - confirm whether `count` / displayed card index / deduped course length are derived from the same source object
+
+## Session Update (2026-04-20, OCR Review Card Compaction)
+- Resolved the previously deferred schedule-image review card crowding issue on the frontend:
+  - `student-planner/frontend/src/pages/ChatPage.tsx` now detects structured schedule review cards that also carry raw OCR table text in `question`
+  - when the question includes serialized table markers such as `完整课程列表如下` / `|#|`, the UI now replaces that block with a compact review summary and keeps only the extracted issue note (for example `发现的问题：...`)
+  - the structured course cards remain the primary review surface, so the same course list is no longer rendered twice in mixed formats inside one confirmation card
+- Styling support:
+  - `student-planner/frontend/src/index.css` adds a dedicated compact summary / issue-note block for review cards, with constrained height for long OCR warning text
+- Regression coverage:
+  - added `frontend/src/pages/ChatPage.test.tsx::hides raw OCR table text when a structured schedule review card is available`
+- Verification:
+  - `npm --prefix D:\student_time_plan\student-planner\frontend test -- src/pages/ChatPage.test.tsx` (36 passed)
+  - `npm --prefix D:\student_time_plan\student-planner\frontend test -- src/pages/ChatPage.test.tsx src/stores/chatStore.test.ts` (46 passed)
+  - `npm --prefix D:\student_time_plan\student-planner\frontend run build` (PASS)

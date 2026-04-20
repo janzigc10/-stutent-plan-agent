@@ -21,6 +21,8 @@ export interface Course {
   end_time: string
   week_start: number
   week_end: number
+  week_pattern?: 'all' | 'odd' | 'even'
+  week_text?: string | null
 }
 
 export interface Task {
@@ -38,7 +40,21 @@ export interface Task {
 export interface ScheduleUploadResponse {
   file_id: string
   kind: 'spreadsheet' | 'image'
+  status?: 'processing' | 'parsed'
   count: number
   source_file_count: number
   courses: unknown[]
+}
+
+export interface ScheduleUploadStatusResponse {
+  file_id: string
+  kind: 'spreadsheet' | 'image'
+  status: 'QUEUED' | 'PARSING' | 'PARSED' | 'FAILED' | 'READY' | 'NEED_PERIOD_TIMES'
+  progress: number
+  error: string | null
+  courses: unknown[]
+  count: number
+  missing_periods: string[]
+  missing_semester_fields?: string[]
+  source_file_count: number
 }

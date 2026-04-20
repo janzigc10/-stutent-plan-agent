@@ -112,3 +112,40 @@ async def test_bulk_import_uses_default_reminder_minutes_preference(setup_db) ->
         reminders_result = await db.execute(select(Reminder).where(Reminder.user_id == "test-user-3"))
         reminder = reminders_result.scalar_one()
         assert reminder.advance_minutes == 30
+
+
+@pytest.mark.asyncio
+async def test_bulk_import_preserves_week_pattern_and_text(setup_db) -> None:
+    from tests.conftest import TestSession
+
+    async with TestSession() as db:
+        user = User(id="test-user-4", username="bulktest4", hashed_password="x")
+        db.add(user)
+        await db.commit()
+
+        result = await execute_tool(
+            "bulk_import_courses",
+            {
+                "courses": [
+                    {
+                        "name": "practice-course",
+                        "weekday": 1,
+                        "start_time": "08:00",
+                        "end_time": "09:40",
+                        "week_start": 1,
+                        "week_end": 18,
+                        "week_pattern": "odd",
+                        "week_text": "Week 1-18 (odd)",
+                    }
+                ]
+            },
+            db=db,
+            user_id="test-user-4",
+        )
+
+        assert result["status"] == "imported"
+
+        courses_result = await db.execute(select(Course).where(Course.user_id == "test-user-4"))
+        course = courses_result.scalar_one()
+        assert course.week_pattern == "odd"
+        assert course.week_text == "Week 1-18 (odd)"

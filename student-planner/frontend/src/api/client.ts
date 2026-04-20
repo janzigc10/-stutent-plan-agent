@@ -1,4 +1,11 @@
-import type { Course, ScheduleUploadResponse, Task, TokenResponse, User } from '../types/api'
+import type {
+  Course,
+  ScheduleUploadResponse,
+  ScheduleUploadStatusResponse,
+  Task,
+  TokenResponse,
+  User,
+} from '../types/api'
 
 const TOKEN_KEY = 'student-planner-token'
 
@@ -104,10 +111,13 @@ export const api = {
       body: formData,
     })
   },
+  getScheduleUploadStatus(fileId: string) {
+    return request<ScheduleUploadStatusResponse>(`/api/schedule/upload/${fileId}`)
+  },
   listCourses() {
     return request<Course[]>('/api/courses/')
   },
-  updateCourse(courseId: string, body: Partial<Pick<Course, 'name' | 'teacher' | 'location' | 'weekday' | 'start_time' | 'end_time' | 'week_start' | 'week_end'>>) {
+  updateCourse(courseId: string, body: Partial<Pick<Course, 'name' | 'teacher' | 'location' | 'weekday' | 'start_time' | 'end_time' | 'week_start' | 'week_end' | 'week_pattern' | 'week_text'>>) {
     return request<Course>(`/api/courses/${courseId}`, {
       method: 'PATCH',
       body: JSON.stringify(body),

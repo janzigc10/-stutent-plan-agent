@@ -5,6 +5,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom'
 
 import { api } from '../api/client'
 import { AppShell } from '../components/AppShell'
+import { useAuthStore } from '../stores/authStore'
 import { useCalendarStore } from '../stores/calendarStore'
 import { CalendarPage } from './CalendarPage'
 
@@ -22,6 +23,16 @@ function renderCalendarShell() {
 
 describe('Calendar page integration', () => {
   beforeEach(() => {
+    useAuthStore.setState({
+      token: 'token',
+      user: {
+        id: 'user-1',
+        username: 'chen',
+        preferences: {},
+        current_semester_start: '2026-04-20',
+      },
+      isBootstrapping: false,
+    })
     useCalendarStore.setState({
       currentDate: '2026-03-30',
       viewMode: 'day',
@@ -140,6 +151,48 @@ describe('Calendar page integration', () => {
     await waitFor(() => {
       expect(api.listTasks).toHaveBeenLastCalledWith('2026-03-30', '2026-03-30')
     })
+  })
+
+  it('shows month-view course dots only on active teaching weeks', async () => {
+    useCalendarStore.setState({
+      currentDate: '2026-04-20',
+      viewMode: 'month',
+      courses: [],
+      tasks: [],
+      isLoading: false,
+      error: null,
+    })
+    vi.mocked(api.listCourses).mockResolvedValue([
+      {
+        id: 'course-1',
+        user_id: 'user-1',
+        name: 'Practice Course',
+        teacher: null,
+        location: 'Gym',
+        weekday: 1,
+        start_time: '08:00',
+        end_time: '09:40',
+        week_start: 1,
+        week_end: 3,
+        week_pattern: 'odd',
+        week_text: 'Week 1-3 (odd)',
+      },
+    ])
+    vi.mocked(api.listTasks).mockResolvedValue([])
+
+    renderCalendarShell()
+
+    await waitFor(() => {
+      expect(api.listCourses).toHaveBeenCalled()
+    })
+
+    const beforeSemester = screen.getByRole('button', { name: '13' })
+    const weekOne = screen.getByRole('button', { name: '20' })
+    const weekTwo = screen.getByRole('button', { name: '27' })
+
+    expect(beforeSemester.querySelector('.dot--course')).toBeNull()
+    expect(weekOne.querySelector('.dot--course')).not.toBeNull()
+    expect(weekTwo.querySelector('.dot--course')).toBeNull()
   })
 
   it('renders timeline content without emoji prefixes', async () => {

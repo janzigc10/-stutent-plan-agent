@@ -24,6 +24,7 @@ def test_expected_tools_present():
     expected = {
         "list_courses",
         "add_course",
+        "update_course",
         "delete_course",
         "get_free_slots",
         "create_study_plan",

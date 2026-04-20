@@ -1,6 +1,8 @@
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
+
+WeekPattern = Literal["all", "odd", "even"]
 
 
 class CourseCreate(BaseModel):
@@ -12,6 +14,8 @@ class CourseCreate(BaseModel):
     end_time: str = Field(pattern=r"^\d{2}:\d{2}$")
     week_start: int = Field(default=1, ge=1)
     week_end: int = Field(default=16, ge=1)
+    week_pattern: WeekPattern = "all"
+    week_text: Optional[str] = None
 
 
 class CourseUpdate(BaseModel):
@@ -23,6 +27,8 @@ class CourseUpdate(BaseModel):
     end_time: Optional[str] = Field(default=None, pattern=r"^\d{2}:\d{2}$")
     week_start: Optional[int] = Field(default=None, ge=1)
     week_end: Optional[int] = Field(default=None, ge=1)
+    week_pattern: Optional[WeekPattern] = None
+    week_text: Optional[str] = None
 
 
 class CourseOut(BaseModel):
@@ -36,5 +42,7 @@ class CourseOut(BaseModel):
     end_time: str
     week_start: int
     week_end: int
+    week_pattern: WeekPattern = "all"
+    week_text: Optional[str] = None
 
     model_config = {"from_attributes": True}

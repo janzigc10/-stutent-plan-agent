@@ -20,9 +20,24 @@ class CachedScheduleUpload:
     created_at: datetime
     status: str = "PARSED"
     missing_periods: list[str] | None = None
+    missing_semester_fields: list[str] | None = None
+    progress: int = 100
+    error: str | None = None
+    source_file_count: int = 1
 
 
-def store_schedule_upload(user_id: str, kind: str, courses: list[dict[str, Any]]) -> str:
+def store_schedule_upload(
+    user_id: str,
+    kind: str,
+    courses: list[dict[str, Any]],
+    *,
+    status: str = "PARSED",
+    missing_periods: list[str] | None = None,
+    missing_semester_fields: list[str] | None = None,
+    progress: int = 100,
+    error: str | None = None,
+    source_file_count: int = 1,
+) -> str:
     file_id = str(uuid4())
     _CACHE[(user_id, file_id)] = CachedScheduleUpload(
         user_id=user_id,
@@ -30,6 +45,12 @@ def store_schedule_upload(user_id: str, kind: str, courses: list[dict[str, Any]]
         kind=kind,
         courses=deepcopy(courses),
         created_at=datetime.now(UTC),
+        status=status,
+        missing_periods=deepcopy(missing_periods),
+        missing_semester_fields=deepcopy(missing_semester_fields),
+        progress=max(0, min(100, progress)),
+        error=error,
+        source_file_count=max(1, source_file_count),
     )
     _prune_expired()
     return file_id
@@ -48,6 +69,10 @@ def get_schedule_upload(user_id: str, file_id: str) -> CachedScheduleUpload | No
         created_at=cached.created_at,
         status=cached.status,
         missing_periods=deepcopy(cached.missing_periods),
+        missing_semester_fields=deepcopy(cached.missing_semester_fields),
+        progress=cached.progress,
+        error=cached.error,
+        source_file_count=cached.source_file_count,
     )
 
 
@@ -57,7 +82,11 @@ def update_schedule_upload_state(
     *,
     status: str,
     missing_periods: list[str] | None = None,
+    missing_semester_fields: list[str] | None = None,
     courses: list[dict[str, Any]] | None = None,
+    progress: int | None = None,
+    error: str | None = None,
+    source_file_count: int | None = None,
 ) -> CachedScheduleUpload | None:
     _prune_expired()
     cached = _CACHE.get((user_id, file_id))
@@ -71,7 +100,15 @@ def update_schedule_upload_state(
         courses=deepcopy(courses) if courses is not None else deepcopy(cached.courses),
         created_at=cached.created_at,
         status=status,
-        missing_periods=deepcopy(missing_periods) if missing_periods is not None else None,
+        missing_periods=deepcopy(missing_periods) if missing_periods is not None else deepcopy(cached.missing_periods),
+        missing_semester_fields=(
+            deepcopy(missing_semester_fields)
+            if missing_semester_fields is not None
+            else deepcopy(cached.missing_semester_fields)
+        ),
+        progress=max(0, min(100, progress)) if progress is not None else cached.progress,
+        error=error if error is not None else cached.error,
+        source_file_count=max(1, source_file_count) if source_file_count is not None else cached.source_file_count,
     )
     _CACHE[(user_id, file_id)] = updated
     return get_schedule_upload(user_id, file_id)

@@ -38,6 +38,35 @@ describe('calendar events', () => {
 
     expect(events.map((event) => event.title)).toEqual(['高等数学', '复习线代'])
   })
+
+  it('filters courses by semester start, teaching week range, and odd-even pattern', () => {
+    const courses = [
+      {
+        id: 'course-odd-week',
+        user_id: 'user-1',
+        name: 'Practice Course',
+        teacher: null,
+        location: 'Gym',
+        weekday: 1,
+        start_time: '08:00',
+        end_time: '09:40',
+        week_start: 1,
+        week_end: 3,
+        week_pattern: 'odd' as const,
+        week_text: 'Week 1-3 (odd)',
+      },
+    ]
+
+    expect(eventsForDate('2026-04-13', courses, [], '2026-04-20')).toEqual([])
+    expect(eventsForDate('2026-04-20', courses, [], '2026-04-20').map((event) => event.title)).toEqual([
+      'Practice Course',
+    ])
+    expect(eventsForDate('2026-04-27', courses, [], '2026-04-20')).toEqual([])
+    expect(eventsForDate('2026-05-04', courses, [], '2026-04-20').map((event) => event.title)).toEqual([
+      'Practice Course',
+    ])
+    expect(eventsForDate('2026-05-11', courses, [], '2026-04-20')).toEqual([])
+  })
 })
 
 describe('calendar date shifting', () => {

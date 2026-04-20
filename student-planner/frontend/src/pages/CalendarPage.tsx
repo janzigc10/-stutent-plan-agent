@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent, TouchEvent } from 'react'
 
 import { CourseIcon, TaskIcon } from '../components/icons'
-import { eventsForDate, useCalendarStore } from '../stores/calendarStore'
+import { useAuthStore } from '../stores/authStore'
+import { courseOccursOnDate, eventsForDate, useCalendarStore } from '../stores/calendarStore'
 
 function toDateString(date: Date) {
   const year = date.getFullYear()
@@ -21,6 +22,7 @@ function isInteractiveTarget(target: EventTarget | null) {
 const WEEK_LABELS = ['一', '二', '三', '四', '五', '六', '日']
 
 export function CalendarPage() {
+  const semesterStart = useAuthStore((state) => state.user?.current_semester_start ?? null)
   const {
     completeTask,
     courses,
@@ -32,6 +34,7 @@ export function CalendarPage() {
     setCurrentDate,
     setViewMode,
     shiftDate,
+    shiftMonth,
     tasks,
     viewMode,
   } = useCalendarStore()
@@ -43,7 +46,10 @@ export function CalendarPage() {
   const [description, setDescription] = useState('')
   const dayTouchStartXRef = useRef<number | null>(null)
   const monthTouchStartXRef = useRef<number | null>(null)
-  const events = useMemo(() => eventsForDate(currentDate, courses, tasks), [courses, currentDate, tasks])
+  const events = useMemo(
+    () => eventsForDate(currentDate, courses, tasks, semesterStart),
+    [courses, currentDate, semesterStart, tasks],
+  )
 
   useEffect(() => {
     void load()
@@ -99,23 +105,6 @@ export function CalendarPage() {
     const trailingCount = (7 - (withLeading.length % 7)) % 7
     return [...withLeading, ...Array.from({ length: trailingCount }, () => null)]
   }, [monthMeta.daysInMonth, monthMeta.leadingEmpty])
-
-  const activeCourseWeekdays = useMemo(() => new Set(courses.map((course) => course.weekday)), [courses])
-
-  function shiftMonth(months: number) {
-    const [year, month, day] = currentDate.split('-').map((value) => Number(value))
-    if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) {
-      return
-    }
-    const target = new Date(year, month - 1 + months, 1)
-    const targetYear = target.getFullYear()
-    const targetMonth = target.getMonth()
-    const daysInTargetMonth = new Date(targetYear, targetMonth + 1, 0).getDate()
-    const nextDay = Math.min(day, daysInTargetMonth)
-    const nextDate = toDateString(new Date(targetYear, targetMonth, nextDay))
-    setCurrentDate(nextDate)
-    void load()
-  }
 
   function selectMonthDay(day: number) {
     const [year, month] = currentDate.split('-').map((value) => Number(value))
@@ -219,10 +208,12 @@ export function CalendarPage() {
                 return <span className="month-grid__blank" key={`blank-${index}`} aria-hidden="true" />
               }
 
-              const weekday = (index % 7) + 1
               const isSelected = day === monthMeta.selectedDay
               const isToday = isCurrentMonthToday && day === today.getDate()
-              const hasCourse = activeCourseWeekdays.has(weekday)
+              const cell = new Date(monthMeta.year, monthMeta.month - 1, day)
+              const weekday = cell.getDay() === 0 ? 7 : cell.getDay()
+              const cellDate = toDateString(cell)
+              const hasCourse = courses.some((course) => courseOccursOnDate(course, cellDate, semesterStart))
               const hasTask = isSelected && tasks.length > 0
               const classes = [
                 'month-grid__day',

@@ -1,5 +1,7 @@
+import asyncio
 import io
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 from httpx import AsyncClient
@@ -69,7 +71,12 @@ async def test_upload_multiple_images_merges_courses(
     auth_client: AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def fake_parse_schedule_image(image_bytes: bytes, mime_type: str) -> list[RawCourse]:
+    async def fake_parse_schedule_image(
+        image_bytes: bytes,
+        mime_type: str,
+        fallback_week_number: int | None = None,
+        prefer_parity_from_week_hint: bool = False,
+    ) -> list[RawCourse]:
         if image_bytes == b"img-1":
             return [_course("image-course-1")]
         if image_bytes == b"img-2":
@@ -77,6 +84,7 @@ async def test_upload_multiple_images_merges_courses(
         raise AssertionError(f"unexpected image payload: {image_bytes!r}")
 
     monkeypatch.setattr("app.agent.schedule_ocr.parse_schedule_image", fake_parse_schedule_image)
+    monkeypatch.setattr("app.agent.schedule_ocr.detect_schedule_week", AsyncMock(return_value=None))
 
     response = await auth_client.post(
         "/api/schedule/upload",
@@ -91,8 +99,145 @@ async def test_upload_multiple_images_merges_courses(
     assert data["file_id"]
     assert data["kind"] == "image"
     assert data["source_file_count"] == 2
-    assert data["count"] == 2
-    assert [course["name"] for course in data["courses"]] == ["image-course-1", "image-course-2"]
+    assert data["status"] == "processing"
+    assert data["count"] == 0
+    assert data["courses"] == []
+
+    status_payload: dict | None = None
+    for _ in range(50):
+        status_response = await auth_client.get(f"/api/schedule/upload/{data['file_id']}")
+        assert status_response.status_code == 200
+        status_payload = status_response.json()
+        if status_payload["status"] == "PARSED":
+            break
+        await asyncio.sleep(0.01)
+
+    assert status_payload is not None
+    assert status_payload["status"] == "PARSED"
+    assert status_payload["count"] == 2
+    assert [course["name"] for course in status_payload["courses"]] == [
+        "image-course-1",
+        "image-course-2",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_upload_multiple_images_merges_odd_even_into_all_weeks(
+    auth_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_parse_schedule_image(
+        image_bytes: bytes,
+        mime_type: str,
+        fallback_week_number: int | None = None,
+        prefer_parity_from_week_hint: bool = False,
+    ) -> list[RawCourse]:
+        if image_bytes == b"img-odd":
+            return [
+                RawCourse(
+                    name="natural-language-processing",
+                    teacher=None,
+                    location="room-301",
+                    weekday=3,
+                    period="1-2",
+                    week_start=1,
+                    week_end=18,
+                    week_pattern="odd",
+                    week_text="第1-18周(单周)",
+                )
+            ]
+        if image_bytes == b"img-even":
+            return [
+                RawCourse(
+                    name="natural-language-processing",
+                    teacher=None,
+                    location="room-301",
+                    weekday=3,
+                    period="1-2",
+                    week_start=1,
+                    week_end=18,
+                    week_pattern="even",
+                    week_text="第1-18周(双周)",
+                )
+            ]
+        raise AssertionError(f"unexpected image payload: {image_bytes!r}")
+
+    monkeypatch.setattr("app.agent.schedule_ocr.parse_schedule_image", fake_parse_schedule_image)
+    monkeypatch.setattr("app.agent.schedule_ocr.detect_schedule_week", AsyncMock(return_value=None))
+
+    response = await auth_client.post(
+        "/api/schedule/upload",
+        files=[
+            ("file", ("odd.png", io.BytesIO(b"img-odd"), "image/png")),
+            ("file", ("even.jpg", io.BytesIO(b"img-even"), "image/jpeg")),
+        ],
+    )
+    assert response.status_code == 200
+    upload = response.json()
+
+    status_payload: dict | None = None
+    for _ in range(50):
+        status_response = await auth_client.get(f"/api/schedule/upload/{upload['file_id']}")
+        assert status_response.status_code == 200
+        status_payload = status_response.json()
+        if status_payload["status"] == "PARSED":
+            break
+        await asyncio.sleep(0.01)
+
+    assert status_payload is not None
+    assert status_payload["status"] == "PARSED"
+    assert status_payload["count"] == 1
+    course = status_payload["courses"][0]
+    assert course["week_start"] == 1
+    assert course["week_end"] == 18
+    assert course["week_pattern"] == "all"
+    assert course["week_text"] == "第1-18周"
+
+
+@pytest.mark.asyncio
+async def test_upload_image_status_reports_failed_parse(
+    auth_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def failing_parse_schedule_image(
+        image_bytes: bytes,
+        mime_type: str,
+        fallback_week_number: int | None = None,
+        prefer_parity_from_week_hint: bool = False,
+    ) -> list[RawCourse]:
+        raise RuntimeError("vision parser down")
+
+    monkeypatch.setattr(
+        "app.agent.schedule_ocr.parse_schedule_image",
+        failing_parse_schedule_image,
+    )
+    monkeypatch.setattr("app.agent.schedule_ocr.detect_schedule_week", AsyncMock(return_value=None))
+
+    response = await auth_client.post(
+        "/api/schedule/upload",
+        files=[("file", ("one.png", io.BytesIO(b"img-1"), "image/png"))],
+    )
+    assert response.status_code == 200
+    upload = response.json()
+
+    status_payload: dict | None = None
+    for _ in range(50):
+        status_response = await auth_client.get(f"/api/schedule/upload/{upload['file_id']}")
+        assert status_response.status_code == 200
+        status_payload = status_response.json()
+        if status_payload["status"] == "FAILED":
+            break
+        await asyncio.sleep(0.01)
+
+    assert status_payload is not None
+    assert status_payload["status"] == "FAILED"
+    assert status_payload["error"] == "vision parser down"
+
+
+@pytest.mark.asyncio
+async def test_upload_status_returns_404_when_file_id_is_unknown(auth_client: AsyncClient) -> None:
+    response = await auth_client.get("/api/schedule/upload/missing-id")
+    assert response.status_code == 404
 
 
 @pytest.mark.asyncio

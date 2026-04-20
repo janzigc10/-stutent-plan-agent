@@ -57,6 +57,8 @@ async def _list_courses(db: AsyncSession, user_id: str, **kwargs) -> dict[str, A
                 "end_time": course.end_time,
                 "week_start": course.week_start,
                 "week_end": course.week_end,
+                "week_pattern": course.week_pattern,
+                "week_text": course.week_text,
             }
             for course in courses
         ],
@@ -64,12 +66,77 @@ async def _list_courses(db: AsyncSession, user_id: str, **kwargs) -> dict[str, A
     }
 
 
+def _build_course_week_text(week_start: int, week_end: int, week_pattern: str) -> str:
+    if week_pattern == "odd":
+        return f"Week {week_start}-{week_end} (odd)"
+    if week_pattern == "even":
+        return f"Week {week_start}-{week_end} (even)"
+    return f"Week {week_start}-{week_end}"
+
+
+def _normalize_course_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(payload)
+    week_start = int(normalized.get("week_start", 1))
+    week_end = int(normalized.get("week_end", 16))
+    if week_end < week_start:
+        week_end = week_start
+    week_pattern = str(normalized.get("week_pattern") or "all").lower()
+    if week_pattern not in {"all", "odd", "even"}:
+        week_pattern = "all"
+    normalized["week_start"] = week_start
+    normalized["week_end"] = week_end
+    normalized["week_pattern"] = week_pattern
+    normalized["week_text"] = normalized.get("week_text") or _build_course_week_text(
+        week_start, week_end, week_pattern
+    )
+    return normalized
+
+
 async def _add_course(db: AsyncSession, user_id: str, **kwargs) -> dict[str, Any]:
-    course = Course(user_id=user_id, **kwargs)
+    course = Course(user_id=user_id, **_normalize_course_payload(kwargs))
     db.add(course)
     await db.commit()
     await db.refresh(course)
     return {"id": course.id, "name": course.name, "status": "created"}
+
+
+async def _update_course(db: AsyncSession, user_id: str, course_id: str, **kwargs) -> dict[str, Any]:
+    result = await db.execute(
+        select(Course).where(Course.id == course_id, Course.user_id == user_id)
+    )
+    course = result.scalar_one_or_none()
+    if course is None:
+        return {"error": "Course not found"}
+
+    payload = {
+        "name": course.name,
+        "teacher": course.teacher,
+        "location": course.location,
+        "weekday": course.weekday,
+        "start_time": course.start_time,
+        "end_time": course.end_time,
+        "week_start": course.week_start,
+        "week_end": course.week_end,
+        "week_pattern": course.week_pattern,
+        "week_text": course.week_text,
+    }
+    payload.update(kwargs)
+    normalized = _normalize_course_payload(payload)
+
+    course.name = normalized["name"]
+    course.teacher = normalized.get("teacher")
+    course.location = normalized.get("location")
+    course.weekday = normalized["weekday"]
+    course.start_time = normalized["start_time"]
+    course.end_time = normalized["end_time"]
+    course.week_start = normalized["week_start"]
+    course.week_end = normalized["week_end"]
+    course.week_pattern = normalized["week_pattern"]
+    course.week_text = normalized["week_text"]
+
+    await db.commit()
+    await db.refresh(course)
+    return {"id": course.id, "name": course.name, "status": "updated"}
 
 
 async def _delete_course(db: AsyncSession, user_id: str, course_id: str, **kwargs) -> dict[str, Any]:
@@ -380,11 +447,32 @@ async def _parse_cached_schedule(
         return {"error": "Schedule upload not found"}
     if cached.kind != expected_kind:
         return {"error": f"Schedule upload kind mismatch: expected {expected_kind}, got {cached.kind}"}
-
+    if cached.status in {"QUEUED", "PARSING"}:
+        return {
+            "status": "processing",
+            "kind": cached.kind,
+            "file_id": file_id,
+            "progress": cached.progress,
+            "message": "\u8bfe\u8868\u56fe\u7247\u4ecd\u5728\u89e3\u6790\u4e2d\uff0c\u8bf7\u7a0d\u5019\u518d\u8bd5\u3002",
+        }
+    if cached.status == "FAILED":
+        return {
+            "status": "failed",
+            "kind": cached.kind,
+            "file_id": file_id,
+            "error": cached.error or "\u8bfe\u8868\u89e3\u6790\u5931\u8d25",
+            "message": "\u8bfe\u8868\u56fe\u7247\u89e3\u6790\u5931\u8d25\uff0c\u8bf7\u91cd\u65b0\u4e0a\u4f20\u540e\u91cd\u8bd5\u3002",
+        }
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
-    schedule = _period_schedule_from_preferences(user.preferences if user else None)
-
+    preferences = user.preferences if user else None
+    schedule = _period_schedule_from_preferences(preferences)
+    term_total_weeks = _term_total_weeks_from_preferences(preferences)
+    missing_semester_fields: list[str] = []
+    if user is None or user.current_semester_start is None:
+        missing_semester_fields.append("semester_start_date")
+    if term_total_weeks is None:
+        missing_semester_fields.append("term_total_weeks")
     missing_periods: list[str] = []
     converted: list[dict[str, Any]] = []
     for course in cached.courses:
@@ -395,25 +483,25 @@ async def _parse_cached_schedule(
                 period = normalize_period(raw_period)
             except ValueError:
                 period = raw_period.strip()
-
             if not period:
                 converted.append(course_data)
                 continue
-
             times = convert_periods(period, schedule)
             if times is None:
                 if period not in missing_periods:
                     missing_periods.append(period)
             else:
                 course_data.update(times)
+        if term_total_weeks is not None:
+            _normalize_course_weeks(course_data, term_total_weeks)
         converted.append(course_data)
-
-    if missing_periods:
+    if missing_periods or missing_semester_fields:
         update_schedule_upload_state(
             user_id,
             file_id,
             status="NEED_PERIOD_TIMES",
             missing_periods=missing_periods,
+            missing_semester_fields=missing_semester_fields,
             courses=converted,
         )
         return {
@@ -421,15 +509,16 @@ async def _parse_cached_schedule(
             "kind": cached.kind,
             "courses": converted,
             "missing_periods": missing_periods,
-            "message": "课表已识别节次，但缺少具体上课时间，请先向用户追问节次时间。",
+            "missing_semester_fields": missing_semester_fields,
+            "message": "\u8bfe\u8868\u8bc6\u522b\u5df2\u5b8c\u6210\uff0c\u4f46\u4ecd\u9700\u8865\u5145\u5b66\u671f\u5f00\u59cb\u65e5\u671f\u3001\u5b66\u671f\u603b\u5468\u6570\u548c/\u6216\u8282\u6b21\u65f6\u95f4\u3002\u8bf7\u4e00\u6b21\u6027\u8ffd\u95ee\u5e76\u8c03\u7528 save_period_times \u4fdd\u5b58\u3002",
             "file_id": file_id,
         }
-
     update_schedule_upload_state(
         user_id,
         file_id,
         status="READY",
         missing_periods=[],
+        missing_semester_fields=[],
         courses=converted,
     )
     return {
@@ -437,83 +526,139 @@ async def _parse_cached_schedule(
         "kind": cached.kind,
         "courses": converted,
         "count": len(converted),
-        "message": "课表已解析，请通过 ask_user 向用户展示识别结果并确认。",
+        "message": "\u8bfe\u8868\u5df2\u89e3\u6790\uff0c\u8bf7\u901a\u8fc7 ask_user \u5411\u7528\u6237\u5c55\u793a\u8bc6\u522b\u7ed3\u679c\u5e76\u786e\u8ba4\u3002",
         "file_id": file_id,
     }
-
-
 def _period_schedule_from_preferences(
     preferences: dict[str, Any] | None,
     term_id: str = "default",
 ) -> dict[str, dict[str, str]]:
     if not isinstance(preferences, dict):
         return {}
-
     templates = preferences.get("period_schedule_templates")
     if isinstance(templates, dict):
         schedule = templates.get(term_id)
         if isinstance(schedule, dict):
             return schedule
-
     schedule = preferences.get("period_schedule")
     if isinstance(schedule, dict):
         return schedule
-
     return {}
-
-
+def _term_total_weeks_from_preferences(
+    preferences: dict[str, Any] | None,
+    term_id: str = "default",
+) -> int | None:
+    if not isinstance(preferences, dict):
+        return None
+    templates = preferences.get("term_total_weeks_templates")
+    if isinstance(templates, dict):
+        value = templates.get(term_id)
+        if isinstance(value, int) and value > 0:
+            return value
+    for key in ("current_term_total_weeks", "term_total_weeks", "semester_total_weeks"):
+        value = preferences.get(key)
+        if isinstance(value, int) and value > 0:
+            return value
+    return None
+def _set_term_total_weeks(preferences: dict[str, Any], term_id: str, total_weeks: int) -> None:
+    templates = dict(preferences.get("term_total_weeks_templates") or {})
+    templates[term_id] = total_weeks
+    preferences["term_total_weeks_templates"] = templates
+    preferences["current_term_total_weeks"] = total_weeks
+def _normalize_course_weeks(course_data: dict[str, Any], total_weeks: int) -> None:
+    try:
+        start = int(course_data.get("week_start", 1))
+    except (TypeError, ValueError):
+        start = 1
+    try:
+        end = int(course_data.get("week_end", total_weeks))
+    except (TypeError, ValueError):
+        end = total_weeks
+    start = max(1, min(start, total_weeks))
+    end = max(1, min(end, total_weeks))
+    if end < start:
+        end = start
+    course_data["week_start"] = start
+    course_data["week_end"] = end
+    pattern = str(course_data.get("week_pattern") or "all").lower()
+    if pattern not in {"all", "odd", "even"}:
+        pattern = "all"
+    course_data["week_pattern"] = pattern
+    if pattern == "odd":
+        course_data["week_text"] = f"\u7b2c{start}-{end}\u5468(\u5355\u5468)"
+    elif pattern == "even":
+        course_data["week_text"] = f"\u7b2c{start}-{end}\u5468(\u53cc\u5468)"
+    else:
+        course_data["week_text"] = f"\u7b2c{start}-{end}\u5468"
 async def _save_period_times(
     db: AsyncSession,
     user_id: str,
     file_id: str,
-    entries: list[dict[str, str]],
+    entries: list[dict[str, str]] | None = None,
+    semester_start_date: str | None = None,
+    term_total_weeks: int | None = None,
     term_id: str = "default",
     **kwargs,
 ) -> dict[str, Any]:
     cached = get_schedule_upload(user_id, file_id)
     if cached is None:
         return {"error": "Schedule upload not found"}
-
-    required_periods = cached.missing_periods or sorted(
-        {
-            str(course.get("period") or "").strip()
-            for course in cached.courses
-            if str(course.get("period") or "").strip()
-        }
-    )
-
+    if cached.missing_periods is not None:
+        required_periods = list(cached.missing_periods)
+    else:
+        required_periods = sorted(
+            {
+                str(course.get("period") or "").strip()
+                for course in cached.courses
+                if str(course.get("period") or "").strip()
+            }
+        )
     period_map: dict[str, dict[str, str]] = {}
-    for entry in entries:
+    for entry in entries or []:
         try:
             period = normalize_period(str(entry.get("period") or ""))
             start_time, end_time = parse_time_range(str(entry.get("time") or ""))
         except ValueError as exc:
             return {"error": str(exc)}
-
         period_map[period] = {"start": start_time, "end": end_time}
-
-    still_missing = [period for period in required_periods if period not in period_map]
-    if still_missing:
-        return {
-            "status": "need_period_times",
-            "file_id": file_id,
-            "missing_periods": still_missing,
-            "message": "仍有节次未填写，请继续补充。",
-        }
-
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
     if user is None:
         return {"error": "User not found"}
-
     preferences = dict(user.preferences or {})
+    existing_term_total_weeks = _term_total_weeks_from_preferences(preferences, term_id=term_id)
+    resolved_term_total_weeks = term_total_weeks if term_total_weeks is not None else existing_term_total_weeks
+    resolved_semester_start = user.current_semester_start
+    if semester_start_date is not None:
+        try:
+            resolved_semester_start = date.fromisoformat(semester_start_date)
+        except ValueError:
+            return {"error": "semester_start_date must be in YYYY-MM-DD format"}
+    if resolved_term_total_weeks is not None and resolved_term_total_weeks <= 0:
+        return {"error": "term_total_weeks must be a positive integer"}
+    missing_semester_fields: list[str] = []
+    if resolved_semester_start is None:
+        missing_semester_fields.append("semester_start_date")
+    if resolved_term_total_weeks is None:
+        missing_semester_fields.append("term_total_weeks")
+    still_missing = [period for period in required_periods if period not in period_map]
+    if still_missing or missing_semester_fields:
+        return {
+            "status": "need_period_times",
+            "file_id": file_id,
+            "missing_periods": still_missing,
+            "missing_semester_fields": missing_semester_fields,
+            "message": "\u4ecd\u6709\u4fe1\u606f\u672a\u8865\u5168\uff0c\u8bf7\u7ee7\u7eed\u8865\u5145\u3002",
+        }
     templates = dict(preferences.get("period_schedule_templates") or {})
     term_schedule = dict(templates.get(term_id) or {})
     term_schedule.update(period_map)
     templates[term_id] = term_schedule
     preferences["period_schedule_templates"] = templates
+    if resolved_term_total_weeks is not None:
+        _set_term_total_weeks(preferences, term_id, resolved_term_total_weeks)
     user.preferences = preferences
-
+    user.current_semester_start = resolved_semester_start
     updated_courses: list[dict[str, Any]] = []
     for course in cached.courses:
         course_data = dict(course)
@@ -526,25 +671,27 @@ async def _save_period_times(
             times = convert_periods(period, term_schedule) if period else None
             if times is not None:
                 course_data.update(times)
+        if resolved_term_total_weeks is not None:
+            _normalize_course_weeks(course_data, resolved_term_total_weeks)
         updated_courses.append(course_data)
-
     update_schedule_upload_state(
         user_id,
         file_id,
         status="READY",
         missing_periods=[],
+        missing_semester_fields=[],
         courses=updated_courses,
     )
     await db.commit()
-
     return {
         "status": "ready",
         "file_id": file_id,
         "courses": updated_courses,
         "count": len(updated_courses),
-        "message": "节次时间已保存，请确认课表后再导入。",
+        "semester_start_date": user.current_semester_start.isoformat() if user.current_semester_start else None,
+        "term_total_weeks": resolved_term_total_weeks,
+        "message": "\u8bfe\u8868\u8865\u5145\u4fe1\u606f\u5df2\u4fdd\u5b58\uff0c\u8bf7\u786e\u8ba4\u540e\u5bfc\u5165\u3002",
     }
-
 
 async def _bulk_import_courses(
     db: AsyncSession,
@@ -564,6 +711,7 @@ async def _bulk_import_courses(
                 "error": f"课程 {course_data.get('name', '未命名课程')} 缺少具体时间，请先补充节次时间（period={period}）。"
             }
 
+        normalized_course = _normalize_course_payload(course_data)
         course = Course(
             user_id=user_id,
             name=course_data["name"],
@@ -572,8 +720,10 @@ async def _bulk_import_courses(
             weekday=course_data["weekday"],
             start_time=start_time,
             end_time=end_time,
-            week_start=course_data.get("week_start", 1),
-            week_end=course_data.get("week_end", 16),
+            week_start=normalized_course["week_start"],
+            week_end=normalized_course["week_end"],
+            week_pattern=normalized_course["week_pattern"],
+            week_text=normalized_course["week_text"],
         )
         db.add(course)
         await db.flush()
@@ -679,6 +829,7 @@ async def _delete_memory_handler(
 TOOL_HANDLERS = {
     "list_courses": _list_courses,
     "add_course": _add_course,
+    "update_course": _update_course,
     "delete_course": _delete_course,
     "get_free_slots": _get_free_slots,
     "create_study_plan": _create_study_plan,

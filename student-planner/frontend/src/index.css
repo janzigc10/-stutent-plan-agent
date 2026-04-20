@@ -128,6 +128,18 @@ a {
   letter-spacing: 0.02em;
 }
 
+.top-bar__calendar-title {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) 34px;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.top-bar__calendar-title span {
+  min-width: 0;
+  text-align: center;
+}
+
 .top-bar__action {
   width: 42px;
   height: 42px;
@@ -140,6 +152,17 @@ a {
   place-items: center;
   box-shadow: var(--shadow-card);
   transition: transform var(--duration-fast) var(--ease-soft), background var(--duration-fast) var(--ease-soft);
+}
+
+.top-bar__nav {
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--color-primary-strong);
+  display: grid;
+  place-items: center;
 }
 
 .top-bar__back {
@@ -162,6 +185,7 @@ a {
   background: rgba(31, 111, 255, 0.1);
 }
 
+.top-bar__nav:active,
 .top-bar__action:active {
   transform: translateY(1px) scale(0.98);
 }
@@ -549,6 +573,35 @@ a {
   text-align: left;
 }
 
+.ask-card__review-copy {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(96, 131, 180, 0.18);
+  background: rgba(236, 244, 255, 0.42);
+}
+
+.ask-card__review-title,
+.ask-card__review-note {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.ask-card__review-title {
+  font-size: var(--fs-sm);
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+.ask-card__review-note {
+  max-height: 112px;
+  overflow: auto;
+  white-space: pre-wrap;
+  font-size: var(--fs-sm);
+  color: var(--color-text-muted);
+}
+
 .ask-card--answered {
   gap: var(--space-2);
 }
@@ -722,6 +775,23 @@ a {
 
 .attachment-tray strong {
   font-size: var(--fs-sm);
+}
+
+.attachment-tray__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.attachment-tray__add-button {
+  border: 1px solid rgba(31, 133, 255, 0.28);
+  background: #fff;
+  color: var(--color-primary-strong);
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  padding: 4px 10px;
 }
 
 .attachment-tray__items {

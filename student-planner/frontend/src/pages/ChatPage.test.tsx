@@ -10,6 +10,33 @@ function createFile(name: string, type: string) {
   return new File(['content'], name, { type })
 }
 
+function createUploadStatus(
+  overrides: Partial<{
+    file_id: string
+    kind: 'image' | 'spreadsheet'
+    status: 'QUEUED' | 'PARSING' | 'PARSED' | 'FAILED' | 'READY' | 'NEED_PERIOD_TIMES'
+    progress: number
+    error: string | null
+    courses: unknown[]
+    count: number
+    missing_periods: string[]
+    source_file_count: number
+  }> = {},
+) {
+  return {
+    file_id: 'schedule-file-status',
+    kind: 'image' as const,
+    status: 'PARSED' as const,
+    progress: 100,
+    error: null,
+    courses: [],
+    count: 0,
+    missing_periods: [],
+    source_file_count: 1,
+    ...overrides,
+  }
+}
+
 class MockWebSocket {
   static OPEN = 1
   static instances: MockWebSocket[] = []
@@ -46,6 +73,7 @@ describe('ChatPage attachment drafting', () => {
     MockWebSocket.instances = []
     vi.stubGlobal('WebSocket', MockWebSocket as unknown as typeof WebSocket)
     vi.spyOn(api, 'uploadSchedule').mockRejectedValue(new Error('should not upload during drafting'))
+    vi.spyOn(api, 'getScheduleUploadStatus').mockResolvedValue(createUploadStatus())
   })
 
   afterEach(() => {
@@ -96,6 +124,15 @@ describe('ChatPage attachment drafting', () => {
 
     expect(screen.getByRole('button', { name: '发送消息' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '添加附件' })).not.toBeInTheDocument()
+  })
+
+  it('keeps an add-more control visible after selecting one attachment', async () => {
+    render(<ChatPage />)
+
+    const input = screen.getByLabelText('上传课表')
+    await userEvent.upload(input, createFile('math-1.png', 'image/png'))
+
+    expect(screen.getByRole('button', { name: '继续添加附件' })).toBeInTheDocument()
   })
 
   it('blocks mixed spreadsheet and image attachments', async () => {
@@ -163,6 +200,12 @@ describe('ChatPage attachment drafting', () => {
       source_file_count: 2,
       courses: [],
     })
+    const getScheduleUploadStatus = vi.spyOn(api, 'getScheduleUploadStatus').mockResolvedValue(
+      createUploadStatus({
+        file_id: 'schedule-file-1',
+        source_file_count: 2,
+      }),
+    )
 
     render(<ChatPage />)
 
@@ -181,6 +224,7 @@ describe('ChatPage attachment drafting', () => {
       expect.objectContaining({ name: 'math-1.png' }),
       expect.objectContaining({ name: 'math-2.jpg' }),
     ])
+    expect(getScheduleUploadStatus).toHaveBeenCalledWith('schedule-file-1')
     expect(MockWebSocket.instances[0]?.send).toHaveBeenLastCalledWith(
       JSON.stringify({
         message: '我上传了课表图片 file_id=schedule-file-1，请解析并展示确认卡片。',
@@ -190,6 +234,87 @@ describe('ChatPage attachment drafting', () => {
     expect(screen.getByText('课表图片')).toBeInTheDocument()
     expect(screen.getByText('共 2 张，等待助手解析')).toBeInTheDocument()
     expect(screen.queryByRole('region', { name: '待发送附件' })).not.toBeInTheDocument()
+  })
+
+  it('keeps polling image parse status until parsed before sending websocket parse prompt', async () => {
+    const user = userEvent.setup()
+    vi.spyOn(api, 'uploadSchedule').mockResolvedValue({
+      file_id: 'schedule-file-poll',
+      kind: 'image',
+      count: 0,
+      source_file_count: 2,
+      courses: [],
+    })
+    const getScheduleUploadStatus = vi
+      .spyOn(api, 'getScheduleUploadStatus')
+      .mockResolvedValueOnce(
+        createUploadStatus({
+          file_id: 'schedule-file-poll',
+          status: 'PARSING',
+          progress: 52,
+          source_file_count: 2,
+        }),
+      )
+      .mockResolvedValueOnce(
+        createUploadStatus({
+          file_id: 'schedule-file-poll',
+          status: 'PARSED',
+          progress: 100,
+          source_file_count: 2,
+        }),
+      )
+
+    render(<ChatPage />)
+
+    const input = screen.getByLabelText('上传课表')
+    await user.upload(input, [
+      createFile('math-1.png', 'image/png'),
+      createFile('math-2.jpg', 'image/jpeg'),
+    ])
+    await user.click(screen.getByRole('button', { name: '发送消息' }))
+
+    await waitFor(() => {
+      expect(getScheduleUploadStatus).toHaveBeenCalledTimes(2)
+    }, { timeout: 4000 })
+    expect(MockWebSocket.instances[0]?.send).toHaveBeenLastCalledWith(
+      JSON.stringify({
+        message: '我上传了课表图片 file_id=schedule-file-poll，请解析并展示确认卡片。',
+      }),
+    )
+  })
+
+  it('restores pending attachments when image parse status becomes failed', async () => {
+    const user = userEvent.setup()
+    vi.spyOn(api, 'uploadSchedule').mockResolvedValue({
+      file_id: 'schedule-file-failed',
+      kind: 'image',
+      count: 0,
+      source_file_count: 1,
+      courses: [],
+    })
+    vi.spyOn(api, 'getScheduleUploadStatus').mockResolvedValue(
+      createUploadStatus({
+        file_id: 'schedule-file-failed',
+        status: 'FAILED',
+        progress: 100,
+        error: 'vision parser down',
+      }),
+    )
+
+    render(<ChatPage />)
+
+    const input = screen.getByLabelText('上传课表')
+    await user.upload(input, createFile('math-1.png', 'image/png'))
+    await user.click(screen.getByRole('button', { name: '发送消息' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('vision parser down')
+    expect(screen.getByRole('region', { name: '待发送附件' })).toHaveTextContent('待发送附件 1')
+    expect(screen.getByText('math-1.png')).toBeInTheDocument()
+    expect(MockWebSocket.instances[0]?.send).not.toHaveBeenCalledWith(
+      JSON.stringify({
+        message: '我上传了课表图片 file_id=schedule-file-failed，请解析并展示确认卡片。',
+      }),
+    )
   })
 
   it('prevents duplicate attachment sends while upload is still in progress', async () => {
@@ -202,6 +327,11 @@ describe('ChatPage attachment drafting', () => {
         new Promise((resolve) => {
           resolveUpload = resolve as typeof resolveUpload
         }),
+    )
+    const getScheduleUploadStatus = vi.spyOn(api, 'getScheduleUploadStatus').mockResolvedValue(
+      createUploadStatus({
+        file_id: 'schedule-file-dup',
+      }),
     )
 
     render(<ChatPage />)
@@ -238,6 +368,7 @@ describe('ChatPage attachment drafting', () => {
     await waitFor(() => {
       expect(screen.queryByRole('region', { name: 'image-parse-bridge' })).not.toBeInTheDocument()
     })
+    expect(getScheduleUploadStatus).toHaveBeenCalledWith('schedule-file-dup')
   })
 
   it('keeps pending attachments when upload fails on send', async () => {
@@ -300,6 +431,11 @@ describe('ChatPage attachment drafting', () => {
       source_file_count: 1,
       courses: [],
     })
+    const getScheduleUploadStatus = vi.spyOn(api, 'getScheduleUploadStatus').mockResolvedValue(
+      createUploadStatus({
+        file_id: 'schedule-file-3',
+      }),
+    )
 
     render(<ChatPage />)
 
@@ -318,6 +454,7 @@ describe('ChatPage attachment drafting', () => {
     expect(screen.getByRole('region', { name: '待发送附件' })).toHaveTextContent('待发送附件 1')
     expect(screen.getByText('math-1.png')).toBeInTheDocument()
     expect(screen.queryByText('已发送 1 张课表图片')).not.toBeInTheDocument()
+    expect(getScheduleUploadStatus).toHaveBeenCalledWith('schedule-file-3')
     expect(socket.send).not.toHaveBeenCalledWith(
       JSON.stringify({
         message: '我上传了课表图片 file_id=schedule-file-3，请解析并展示确认卡片。',
@@ -564,8 +701,70 @@ describe('ChatPage attachment drafting', () => {
     expect(screen.getByLabelText('识别课程列表')).toBeInTheDocument()
     expect(screen.getByText('高等数学')).toBeInTheDocument()
     expect(screen.getByText('周一 · 08:00-09:40')).toBeInTheDocument()
-    expect(screen.getByText('教学楼A301 · 张老师 · 1-16周')).toBeInTheDocument()
+    expect(screen.getByText('教学楼A301 · 张老师 · 第1-16周')).toBeInTheDocument()
     expect(screen.getByText('周二：第3-4节 10:00-11:40')).toBeInTheDocument()
+    expect(screen.queryByText('"courses"')).not.toBeInTheDocument()
+  })
+
+  it('renders odd or even week labels from week_text in review cards', () => {
+    render(<ChatPage />)
+
+    act(() => {
+      useChatStore.getState().applyServerEvent({
+        type: 'ask_user',
+        question: '请确认识别结果',
+        ask_type: 'review',
+        options: ['确认', '取消'],
+        data: {
+          kind: 'image',
+          count: 1,
+          courses: [
+            {
+              name: '自然语言处理',
+              weekday: 3,
+              start_time: '08:30',
+              end_time: '10:05',
+              location: 'A301',
+              week_start: 1,
+              week_end: 18,
+              week_pattern: 'odd',
+              week_text: '第1-18周(单周)',
+            },
+          ],
+        },
+      })
+    })
+
+    expect(screen.getByText('A301 · 第1-18周(单周)')).toBeInTheDocument()
+  })
+
+  it('renders review cards when ask_user data is a stringified JSON payload', () => {
+    const { container } = render(<ChatPage />)
+
+    act(() => {
+      useChatStore.getState().applyServerEvent({
+        type: 'ask_user',
+        question: '请确认识别结果',
+        ask_type: 'review',
+        options: ['确认', '取消'],
+        data: JSON.stringify({
+          count: 1,
+          courses: [
+            {
+              name: '自然语言处理',
+              weekday: 3,
+              start_time: '08:30',
+              end_time: '10:05',
+              location: 'A301',
+              week_text: '第1-18周(单周)',
+            },
+          ],
+        }),
+      })
+    })
+
+    expect(screen.getByText('自然语言处理')).toBeInTheDocument()
+    expect(container.querySelector('.ask-card__schedule-list')).toBeTruthy()
     expect(screen.queryByText('"courses"')).not.toBeInTheDocument()
   })
 
@@ -625,6 +824,38 @@ describe('ChatPage attachment drafting', () => {
     expect(screen.getByText('会展-315(校企工坊) · 张志英 · 第1周')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '确认' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '取消' })).toBeInTheDocument()
+  })
+
+  it('hides raw OCR table text when a structured schedule review card is available', () => {
+    const { container } = render(<ChatPage />)
+
+    act(() => {
+      useChatStore.getState().applyServerEvent({
+        type: 'ask_user',
+        question:
+          'OCR 识别完成，发现的问题：1. 课程名可能有误。完整课程列表如下：|#|课程名|星期|时间|1|自然语言处理|周三|08:30-10:05|请确认后导入。',
+        ask_type: 'review',
+        options: ['纭', '鍙栨秷'],
+        data: {
+          count: 1,
+          courses: [
+            {
+              name: '自然语言处理',
+              weekday: 3,
+              start_time: '08:30',
+              end_time: '10:05',
+              location: 'A301',
+              week_text: '第1-18周',
+            },
+          ],
+        },
+      })
+    })
+
+    expect(container.querySelector('.ask-card__schedule-list')).toBeTruthy()
+    expect(screen.getByText(/OCR 识别完成/)).toBeInTheDocument()
+    expect(screen.getByText(/发现的问题：1\. 课程名可能有误/)).toBeInTheDocument()
+    expect(screen.queryByText(/\|#\|课程名\|星期\|时间/)).not.toBeInTheDocument()
   })
 
   it('renders non-schedule review data as key-value rows instead of a JSON blob', () => {

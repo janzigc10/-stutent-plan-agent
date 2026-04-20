@@ -1,9 +1,10 @@
 class GuardrailViolation(Exception):
     """Raised when a guardrail is violated."""
 
-    def __init__(self, message: str, suggestion: str):
+    def __init__(self, message: str, suggestion: str, *, user_visible: bool = True):
         self.message = message
         self.suggestion = suggestion
+        self.user_visible = user_visible
         super().__init__(message)
 
 
@@ -13,6 +14,7 @@ def check_consecutive_ask_user(tool_history: list[str]) -> None:
         raise GuardrailViolation(
             message="不能连续两次调用 ask_user，中间需要执行一步实际操作。",
             suggestion="请先执行一个工具操作，然后再询问用户。",
+            user_visible=False,
         )
 
 

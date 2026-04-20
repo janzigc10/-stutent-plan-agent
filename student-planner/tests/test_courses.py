@@ -24,6 +24,39 @@ async def test_create_course(auth_client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_course_api_round_trips_week_pattern_fields(auth_client: AsyncClient):
+    response = await auth_client.post(
+        "/api/courses/",
+        json={
+            "name": "practice-course",
+            "weekday": 1,
+            "start_time": "08:00",
+            "end_time": "09:40",
+            "week_start": 1,
+            "week_end": 18,
+            "week_pattern": "odd",
+            "week_text": "Week 1-18 (odd)",
+        },
+    )
+    assert response.status_code == 201
+    created = response.json()
+    assert created["week_pattern"] == "odd"
+    assert created["week_text"] == "Week 1-18 (odd)"
+
+    detail = await auth_client.get(f"/api/courses/{created['id']}")
+    assert detail.status_code == 200
+    assert detail.json()["week_pattern"] == "odd"
+    assert detail.json()["week_text"] == "Week 1-18 (odd)"
+
+    listing = await auth_client.get("/api/courses/")
+    assert listing.status_code == 200
+    assert any(
+        course["week_pattern"] == "odd" and course["week_text"] == "Week 1-18 (odd)"
+        for course in listing.json()
+    )
+
+
+@pytest.mark.asyncio
 async def test_list_courses(auth_client: AsyncClient):
     await auth_client.post(
         "/api/courses/",

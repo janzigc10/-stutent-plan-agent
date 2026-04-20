@@ -4,6 +4,7 @@ import type { ChangeEvent, FormEvent, MutableRefObject } from 'react'
 import { api, getStoredToken } from '../api/client'
 import { MicIcon, PaperclipIcon, PlusIcon, SendIcon } from '../components/icons'
 import type { ChatServerEvent, PendingAsk, ToolProgress } from '../stores/chatStore'
+import type { ScheduleUploadStatusResponse } from '../types/api'
 import { useChatStore } from '../stores/chatStore'
 
 type SpeechRecognitionInstance = {
@@ -27,15 +28,26 @@ interface CoursePreview {
   metaLine: string | null
 }
 
+interface ScheduleReviewNotice {
+  title: string
+  note: string | null
+}
+
 const CHAT_RESPONSE_TIMEOUT_MS = 30000
 const IMAGE_PARSE_BRIDGE_START = 18
 const IMAGE_PARSE_BRIDGE_MAX = 92
 const IMAGE_PARSE_BRIDGE_TICK_MS = 260
 const IMAGE_PARSE_BRIDGE_FINISH_DELAY_MS = 180
+const IMAGE_PARSE_POLL_INTERVAL_MS = 1500
+const IMAGE_PARSE_POLL_TIMEOUT_MS = 90000
 const DEFAULT_CONFIRM_OPTIONS = ['确认', '取消']
 const WEEKDAY_LABELS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
 const COURSE_ENTRY_KEYS = ['courses', 'course_list', 'courseList', '课程列表', '课程清单', '课表列表'] as const
 const REVIEW_COUNT_KEYS = ['count', 'course_count', 'courseCount', 'total', '共识别课程条目', '识别课程数', '课程数量'] as const
+
+const SCHEDULE_REVIEW_RAW_MARKERS = ['完整课程列表如下', '课程列表如下', '课程明细如下', '|#|'] as const
+const SCHEDULE_REVIEW_ISSUE_MARKERS = ['发现的问题：', '发现的问题:', '疑似 OCR 错误：', '疑似 OCR 错误:', '疑似OCR错误：', '疑似OCR错误:'] as const
+const SCHEDULE_REVIEW_NOTE_END_MARKERS = ['完整课程列表如下', '课程列表如下', '课程明细如下', '|#|', '请确认后导入', '确认无误后我将导入课表', '确认后我将导入课表'] as const
 
 type UploadReceiptKind = 'image' | 'spreadsheet'
 
@@ -144,17 +156,67 @@ function normalizeWeekday(value: unknown): string | null {
 }
 
 function formatWeekRange(record: Record<string, unknown>) {
+  const weekText = pickText(record, ['week_text', 'week_range', 'week', '周次', '周数'])
+  if (weekText) {
+    return weekText
+  }
+
   const weekStart = Number(record.week_start)
   const weekEnd = Number(record.week_end)
   if (Number.isFinite(weekStart) && Number.isFinite(weekEnd)) {
-    return `${weekStart}-${weekEnd}周`
+    const rawPattern = asText(record.week_pattern)?.toLowerCase()
+    if (rawPattern === 'odd') {
+      return `第${weekStart}-${weekEnd}周(单周)`
+    }
+    if (rawPattern === 'even') {
+      return `第${weekStart}-${weekEnd}周(双周)`
+    }
+    return `第${weekStart}-${weekEnd}周`
   }
-  return pickText(record, ['week_range', 'week', 'week_text', '周次', '周数'])
+  return null
+}
+
+function tryParseJsonPayload(value: string): unknown | null {
+  const text = value.trim()
+  if (!text || (!text.startsWith('{') && !text.startsWith('['))) {
+    return null
+  }
+  try {
+    return JSON.parse(text)
+  } catch {
+    return null
+  }
+}
+
+function normalizeReviewData(data: unknown): unknown {
+  if (typeof data === 'string') {
+    const parsed = tryParseJsonPayload(data)
+    if (parsed !== null) {
+      return normalizeReviewData(parsed)
+    }
+    return data
+  }
+  if (Array.isArray(data)) {
+    return data.map((item) => normalizeReviewData(item))
+  }
+  if (data && typeof data === 'object') {
+    return Object.fromEntries(
+      Object.entries(data as Record<string, unknown>).map(([key, value]) => [key, normalizeReviewData(value)]),
+    )
+  }
+  return data
 }
 
 function getCourseEntries(data: unknown): unknown[] | null {
   if (Array.isArray(data)) {
     return data
+  }
+  if (typeof data === 'string') {
+    const parsed = tryParseJsonPayload(data)
+    if (parsed !== null) {
+      return getCourseEntries(parsed)
+    }
+    return null
   }
   if (!data || typeof data !== 'object') {
     return null
@@ -198,6 +260,13 @@ function pickSerializedField(text: string, keys: string[]) {
 }
 
 function reviewCountFromData(data: unknown) {
+  if (typeof data === 'string') {
+    const parsed = tryParseJsonPayload(data)
+    if (parsed !== null) {
+      return reviewCountFromData(parsed)
+    }
+    return null
+  }
   if (!data || typeof data !== 'object') {
     return null
   }
@@ -209,6 +278,66 @@ function reviewCountFromData(data: unknown) {
     }
   }
   return null
+}
+
+function compactReviewText(text: string) {
+  return text.replace(/\r\n/g, '\n').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim()
+}
+
+function findFirstMarkerIndex(text: string, markers: readonly string[]) {
+  let matchIndex = -1
+  for (const marker of markers) {
+    const index = text.indexOf(marker)
+    if (index >= 0 && (matchIndex === -1 || index < matchIndex)) {
+      matchIndex = index
+    }
+  }
+  return matchIndex
+}
+
+function extractScheduleReviewNote(question: string) {
+  const normalized = compactReviewText(question)
+  for (const marker of SCHEDULE_REVIEW_ISSUE_MARKERS) {
+    const startIndex = normalized.indexOf(marker)
+    if (startIndex < 0) {
+      continue
+    }
+
+    let note = normalized.slice(startIndex)
+    const nextText = note.slice(marker.length)
+    const endIndex = findFirstMarkerIndex(nextText, SCHEDULE_REVIEW_NOTE_END_MARKERS)
+    if (endIndex >= 0) {
+      note = note.slice(0, marker.length + endIndex)
+    }
+
+    note = note.trim()
+    if (note) {
+      return note
+    }
+  }
+  return null
+}
+
+function buildScheduleReviewNotice(question: string, reviewCount: number): ScheduleReviewNotice | null {
+  const normalized = compactReviewText(question)
+  if (!normalized) {
+    return null
+  }
+
+  const hasRawTable = SCHEDULE_REVIEW_RAW_MARKERS.some((marker) => normalized.includes(marker))
+  if (!hasRawTable && normalized.length <= 140) {
+    return { title: normalized, note: null }
+  }
+
+  const title =
+    reviewCount > 0
+      ? `OCR 识别完成，已整理为 ${reviewCount} 条课程卡片，请确认信息是否正确后再导入。`
+      : 'OCR 识别完成，请确认信息是否正确后再导入。'
+
+  return {
+    title,
+    note: extractScheduleReviewNote(normalized),
+  }
 }
 
 function toCoursePreview(entry: unknown, index: number): CoursePreview {
@@ -324,6 +453,10 @@ function progressSummary(progress: ToolProgress[]) {
   }
 }
 
+function isUploadParsed(status: ScheduleUploadStatusResponse['status']) {
+  return status === 'PARSED' || status === 'READY' || status === 'NEED_PERIOD_TIMES'
+}
+
 export function ChatPage() {
   const socketRef = useRef<WebSocket | null>(null)
   const reconnectRef = useRef(0)
@@ -365,28 +498,51 @@ export function ChatPage() {
   const imageParseBridgeOrder = imageParseBridge ? tailOrder + 1 : null
   const progressInfo = useMemo(() => progressSummary(progress), [progress])
   const canSend = draft.trim().length > 0 || pendingAttachments.length > 0
+  const pendingAttachmentKind = pendingAttachments[0]?.kind ?? null
+  const canAddMoreAttachments =
+    !isBusySending &&
+    (pendingAttachmentKind === null ||
+      (pendingAttachmentKind === 'image' && pendingAttachments.length < 3) ||
+      (pendingAttachmentKind === 'spreadsheet' && pendingAttachments.length < 1))
 
-  const coursePreviews = useMemo(() => {
-    if (!pendingAsk || pendingAsk.type !== 'review' || pendingAsk.data == null) {
+  const normalizedAskData = useMemo(() => {
+    if (!pendingAsk) {
       return null
     }
-    const courseEntries = getCourseEntries(pendingAsk.data)
+    if (pendingAsk.type !== 'review') {
+      return pendingAsk.data
+    }
+    return normalizeReviewData(pendingAsk.data)
+  }, [pendingAsk])
+
+  const coursePreviews = useMemo(() => {
+    if (!pendingAsk || pendingAsk.type !== 'review' || normalizedAskData == null) {
+      return null
+    }
+    const courseEntries = getCourseEntries(normalizedAskData)
     if (!courseEntries) {
       return null
     }
     return courseEntries.map((entry, index) => toCoursePreview(entry, index))
-  }, [pendingAsk])
+  }, [normalizedAskData, pendingAsk])
 
   const reviewCount = useMemo(() => {
-    if (!pendingAsk || pendingAsk.type !== 'review' || pendingAsk.data == null || !coursePreviews) {
+    if (!pendingAsk || pendingAsk.type !== 'review' || normalizedAskData == null || !coursePreviews) {
       return coursePreviews?.length ?? 0
     }
-    const parsedCount = reviewCountFromData(pendingAsk.data)
+    const parsedCount = reviewCountFromData(normalizedAskData)
     if (parsedCount !== null) {
       return parsedCount
     }
     return coursePreviews.length
-  }, [coursePreviews, pendingAsk])
+  }, [coursePreviews, normalizedAskData, pendingAsk])
+
+  const scheduleReviewNotice = useMemo(() => {
+    if (!pendingAsk || pendingAsk.type !== 'review' || !coursePreviews) {
+      return null
+    }
+    return buildScheduleReviewNotice(pendingAsk.question, reviewCount)
+  }, [coursePreviews, pendingAsk, reviewCount])
 
   useEffect(() => {
     if (!imageParseBridge) {
@@ -507,6 +663,9 @@ export function ChatPage() {
       }
       try {
         const uploadResponse = await api.uploadSchedule(attachments.map((item) => item.file))
+        if (isImageBatch) {
+          await waitForImageParseReady(uploadResponse.file_id)
+        }
         const sent = sendJson(socketRef, { message: buildAttachmentPrompt(uploadResponse.file_id, uploadResponse.kind) })
         if (!sent) {
           setPendingAttachments(attachments)
@@ -654,6 +813,36 @@ export function ChatPage() {
     fileInputRef.current?.click()
   }
 
+  async function waitForImageParseReady(fileId: string) {
+    const deadline = Date.now() + IMAGE_PARSE_POLL_TIMEOUT_MS
+    while (Date.now() < deadline) {
+      const status = await api.getScheduleUploadStatus(fileId)
+
+      if (typeof status.progress === 'number') {
+        setImageParseBridge((current) => {
+          if (!current) {
+            return current
+          }
+          const nextProgress = Math.max(current.progress, Math.min(100, Math.max(0, status.progress)))
+          return nextProgress === current.progress ? current : { ...current, progress: nextProgress }
+        })
+      }
+
+      if (isUploadParsed(status.status)) {
+        return
+      }
+      if (status.status === 'FAILED') {
+        throw new Error(status.error || '课表图片解析失败，请稍后重试')
+      }
+
+      await new Promise<void>((resolve) => {
+        window.setTimeout(resolve, IMAGE_PARSE_POLL_INTERVAL_MS)
+      })
+    }
+
+    throw new Error('图片解析超时，请稍后重试')
+  }
+
   return (
     <main className="page chat-page">
       <div className="message-list">
@@ -748,9 +937,18 @@ export function ChatPage() {
             aria-label="需要确认"
             style={{ order: askCardOrder }}
           >
-            <p>{pendingAsk.question}</p>
+            {scheduleReviewNotice ? (
+              <div className="ask-card__review-copy">
+                <p className="ask-card__review-title">{scheduleReviewNotice.title}</p>
+                {scheduleReviewNotice.note ? (
+                  <p className="ask-card__review-note">{scheduleReviewNotice.note}</p>
+                ) : null}
+              </div>
+            ) : (
+              <p>{pendingAsk.question}</p>
+            )}
 
-            {pendingAsk.type === 'review' && pendingAsk.data != null ? (
+            {pendingAsk.type === 'review' && normalizedAskData != null ? (
               coursePreviews ? (
                 <section className="ask-card__schedule">
                   <header className="ask-card__schedule-head">
@@ -773,9 +971,9 @@ export function ChatPage() {
                     )}
                   </div>
                 </section>
-              ) : pendingAsk.data && typeof pendingAsk.data === 'object' && !Array.isArray(pendingAsk.data) ? (
+              ) : normalizedAskData && typeof normalizedAskData === 'object' && !Array.isArray(normalizedAskData) ? (
                 <dl className="ask-card__kv" aria-label="确认详情">
-                  {Object.entries(pendingAsk.data as Record<string, unknown>)
+                  {Object.entries(normalizedAskData as Record<string, unknown>)
                     .filter(([key]) => key !== 'courses')
                     .map(([key, value]) => (
                       <div className="ask-card__kv-row" key={key}>
@@ -785,7 +983,7 @@ export function ChatPage() {
                     ))}
                 </dl>
               ) : (
-                <p className="ask-card__plain">{stringifyDetailValue(pendingAsk.data)}</p>
+                <p className="ask-card__plain">{stringifyDetailValue(normalizedAskData)}</p>
               )
             ) : null}
 
@@ -852,7 +1050,19 @@ export function ChatPage() {
 
       {pendingAttachments.length > 0 && !imageParseBridge ? (
         <section className="attachment-tray" aria-label="待发送附件">
-          <strong>待发送附件 {pendingAttachments.length}</strong>
+          <div className="attachment-tray__head">
+            <strong>待发送附件 {pendingAttachments.length}</strong>
+            {canAddMoreAttachments ? (
+              <button
+                type="button"
+                className="attachment-tray__add-button"
+                aria-label="继续添加附件"
+                onClick={openAttachmentPicker}
+              >
+                继续添加
+              </button>
+            ) : null}
+          </div>
           <div className="attachment-tray__items">
             {pendingAttachments.map((attachment) => (
               <div className="attachment-tray__item" key={attachment.id}>

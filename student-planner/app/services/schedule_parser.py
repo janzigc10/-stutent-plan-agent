@@ -22,6 +22,8 @@ class RawCourse:
     period: str
     week_start: int
     week_end: int
+    week_pattern: str = "all"
+    week_text: str | None = None
 
 
 _WEEKDAY_MAP: dict[str, int] = {

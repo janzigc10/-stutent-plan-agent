@@ -20,3 +20,5 @@ class Course(Base):
     end_time: Mapped[str] = mapped_column(String(5))
     week_start: Mapped[int] = mapped_column(Integer, default=1)
     week_end: Mapped[int] = mapped_column(Integer, default=16)
+    week_pattern: Mapped[str] = mapped_column(String(10), default="all")
+    week_text: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)

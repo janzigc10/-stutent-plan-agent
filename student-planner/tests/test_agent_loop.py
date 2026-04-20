@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from sqlalchemy import select
 
-from app.agent.loop import run_agent_loop
+from app.agent.loop import _build_course_routing_hint, run_agent_loop
 from app.models.conversation_message import ConversationMessage
 from app.models.course import Course
 from app.models.user import User
@@ -17,6 +17,46 @@ def stream_response_chunks(*, response: dict, deltas: list[str] | None = None):
         yield {"type": "response", "response": response}
 
     return _generator()
+
+
+def test_build_course_routing_hint_for_existing_course_correction():
+    hint = _build_course_routing_hint(
+        "你直接帮我优化成一门课吧，我现在日历里看还是两门课",
+        [],
+    )
+
+    assert hint is not None
+    assert "list_courses" in hint
+    assert "update_course" in hint
+    assert "不要要求用户重新上传文件" in hint
+
+
+def test_build_course_routing_hint_for_followup_course_names():
+    history = [
+        ConversationMessage(
+            session_id="session-routing",
+            role="assistant",
+            content='你说的"两门课"是指哪两门？是想合并成一门，还是删掉其中一门？帮我确认一下具体是哪两门课。',
+        )
+    ]
+
+    hint = _build_course_routing_hint(
+        "就是机器人程序动化和机器人流程自动化还有大模型微调技术和大型微调技术",
+        history,
+    )
+
+    assert hint is not None
+    assert "list_courses" in hint
+    assert "update_course" in hint
+
+
+def test_build_course_routing_hint_skips_schedule_import_requests():
+    hint = _build_course_routing_hint(
+        "我上传了课表文件 file_id=abc123，请帮我导入",
+        [],
+    )
+
+    assert hint is None
 
 
 @pytest.mark.asyncio
@@ -121,6 +161,51 @@ async def test_streamed_text_emits_delta_before_final_text(setup_db):
 
 
 @pytest.mark.asyncio
+async def test_streaming_preamble_is_not_emitted_when_response_uses_tool_calls(setup_db):
+    mock_client = AsyncMock()
+    call_count = 0
+
+    def mock_chat_completion_stream(client, messages, tools=None):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return stream_response_chunks(
+                response={
+                    "role": "assistant",
+                    "content": "让我先查一下你的课表。",
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {"name": "list_courses", "arguments": "{}"},
+                        }
+                    ],
+                },
+                deltas=["让我先", "查一下你的课表。"],
+            )
+        return stream_response_chunks(
+            response={"role": "assistant", "content": "已经找到你的课表。"},
+        )
+
+    with patch("app.agent.loop.chat_completion_stream", side_effect=mock_chat_completion_stream):
+        async with TestSession() as db:
+            user = User(id="u2c", username="test2c", hashed_password="x")
+            db.add(user)
+            await db.commit()
+
+            events = []
+            generator = run_agent_loop("帮我看一下现在的课表", user, "session-2c", db, mock_client)
+            async for event in generator:
+                events.append(event)
+
+            assert not any(event["type"] == "text_delta" for event in events)
+            assert any(event["type"] == "tool_call" and event["name"] == "list_courses" for event in events)
+            assert any(event["type"] == "tool_result" and event["name"] == "list_courses" for event in events)
+            final_text = next(event for event in events if event["type"] == "text")
+            assert final_text["content"] == "已经找到你的课表。"
+
+
+@pytest.mark.asyncio
 async def test_ask_user_event_preserves_event_type(setup_db):
     """ask_user events expose event type separately from confirm/select/review mode."""
     mock_client = AsyncMock()
@@ -204,6 +289,253 @@ async def test_ask_user_without_options_or_data_defaults_to_review(setup_db):
             ask_event = await generator.__anext__()
             assert ask_event["type"] == "ask_user"
             assert ask_event["ask_type"] == "review"
+
+
+@pytest.mark.asyncio
+async def test_consecutive_ask_user_violation_is_not_sent_to_user(setup_db):
+    mock_client = AsyncMock()
+    llm_call_count = 0
+
+    def mock_chat_completion_stream(client, messages, tools=None):
+        nonlocal llm_call_count
+        llm_call_count += 1
+        if llm_call_count == 1:
+            return stream_response_chunks(
+                response={
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call_ask_1",
+                            "type": "function",
+                            "function": {
+                                "name": "ask_user",
+                                "arguments": '{"question": "Please confirm the parsed schedule.", "type": "review"}',
+                            },
+                        },
+                        {
+                            "id": "call_ask_2",
+                            "type": "function",
+                            "function": {
+                                "name": "ask_user",
+                                "arguments": '{"question": "Please confirm again.", "type": "review"}',
+                            },
+                        },
+                        {
+                            "id": "call_list",
+                            "type": "function",
+                            "function": {"name": "list_courses", "arguments": "{}"},
+                        },
+                    ],
+                }
+            )
+
+        internal_guardrail_messages = [
+            str(message.get("content") or "")
+            for message in messages
+            if message.get("role") == "tool"
+        ]
+        assert any("不能连续两次调用 ask_user" in content for content in internal_guardrail_messages)
+        return stream_response_chunks(response={"role": "assistant", "content": "Recovered without surfacing an error."})
+
+    with patch("app.agent.loop.chat_completion_stream", side_effect=mock_chat_completion_stream):
+        async with TestSession() as db:
+            user = User(id="u5", username="test5", hashed_password="x")
+            db.add(user)
+            await db.commit()
+
+            events = []
+            generator = run_agent_loop("please import this schedule", user, "session-5", db, mock_client)
+
+            event = await generator.__anext__()
+            while True:
+                events.append(event)
+                try:
+                    if event["type"] == "ask_user":
+                        event = await generator.asend("确认")
+                    else:
+                        event = await generator.__anext__()
+                except StopAsyncIteration:
+                    break
+
+            assert not any(event["type"] == "error" for event in events)
+            assert any(event["type"] == "tool_call" and event["name"] == "list_courses" for event in events)
+            assert any(event["type"] == "tool_result" and event["name"] == "list_courses" for event in events)
+            assert any(event["type"] == "text" for event in events)
+            assert events[-1]["type"] == "done"
+
+
+@pytest.mark.asyncio
+async def test_course_merge_shortcut_collapses_duplicate_courses_without_llm(setup_db):
+    mock_client = AsyncMock()
+
+    with patch(
+        "app.agent.loop.chat_completion_stream",
+        side_effect=AssertionError("LLM should not be called for local course merge shortcut"),
+    ), patch(
+        "app.agent.loop.chat_completion",
+        side_effect=AssertionError("LLM fallback should not be called for local course merge shortcut"),
+    ):
+        async with TestSession() as db:
+            user = User(id="u7", username="test7", hashed_password="x")
+            db.add(user)
+            db.add_all(
+                [
+                    Course(
+                        id="course-wrong-rpa",
+                        user_id="u7",
+                        name="机器人程序动化",
+                        weekday=3,
+                        start_time="10:20",
+                        end_time="11:55",
+                    ),
+                    Course(
+                        id="course-right-rpa",
+                        user_id="u7",
+                        name="机器人流程自动化",
+                        weekday=3,
+                        start_time="10:20",
+                        end_time="11:55",
+                    ),
+                    Course(
+                        id="course-wrong-llm",
+                        user_id="u7",
+                        name="大型微调技术",
+                        weekday=4,
+                        start_time="14:10",
+                        end_time="15:45",
+                    ),
+                    Course(
+                        id="course-right-llm",
+                        user_id="u7",
+                        name="大模型微调技术",
+                        weekday=4,
+                        start_time="14:10",
+                        end_time="15:45",
+                    ),
+                ]
+            )
+            await db.commit()
+
+            generator = run_agent_loop(
+                "你直接帮我优化成一门课吧，我现在日历里看还是两门课",
+                user,
+                "session-7",
+                db,
+                mock_client,
+            )
+
+            first_event = await generator.__anext__()
+            assert first_event["type"] == "ask_user"
+            assert "哪两门" in first_event["question"]
+
+            events = [first_event]
+            event = await generator.asend(
+                "就是机器人程序动化和机器人流程自动化还有大型微调技术和大模型微调技术"
+            )
+            while True:
+                events.append(event)
+                if event["type"] == "ask_user":
+                    event = await generator.asend("确认")
+                    continue
+                try:
+                    event = await generator.__anext__()
+                except StopAsyncIteration:
+                    break
+
+            tool_calls = [event["name"] for event in events if event["type"] == "tool_call"]
+            assert tool_calls.count("list_courses") == 1
+            assert tool_calls.count("delete_course") == 2
+            assert "update_course" not in tool_calls
+            assert any(event["type"] == "text" for event in events)
+            assert events[-1]["type"] == "done"
+
+            result = await db.execute(
+                select(Course).where(Course.user_id == "u7").order_by(Course.start_time, Course.name)
+            )
+            remaining_courses = list(result.scalars().all())
+            assert [course.name for course in remaining_courses] == [
+                "机器人流程自动化",
+                "大模型微调技术",
+            ]
+
+
+@pytest.mark.asyncio
+async def test_course_merge_shortcut_preserves_distinct_week_patterns(setup_db):
+    mock_client = AsyncMock()
+
+    with patch(
+        "app.agent.loop.chat_completion_stream",
+        side_effect=AssertionError("LLM should not be called for local course merge shortcut"),
+    ), patch(
+        "app.agent.loop.chat_completion",
+        side_effect=AssertionError("LLM fallback should not be called for local course merge shortcut"),
+    ):
+        async with TestSession() as db:
+            user = User(id="u7b", username="test7b", hashed_password="x")
+            db.add(user)
+            db.add_all(
+                [
+                    Course(
+                        id="course-wrong-even",
+                        user_id="u7b",
+                        name="机器人程序动化",
+                        weekday=3,
+                        start_time="10:20",
+                        end_time="11:55",
+                        week_pattern="even",
+                    ),
+                    Course(
+                        id="course-right-even",
+                        user_id="u7b",
+                        name="机器人流程自动化",
+                        weekday=3,
+                        start_time="10:20",
+                        end_time="11:55",
+                        week_pattern="even",
+                    ),
+                    Course(
+                        id="course-right-odd",
+                        user_id="u7b",
+                        name="机器人流程自动化",
+                        weekday=3,
+                        start_time="10:20",
+                        end_time="11:55",
+                        week_pattern="odd",
+                    ),
+                ]
+            )
+            await db.commit()
+
+            generator = run_agent_loop(
+                "你直接帮我优化成一门课吧，我现在日历里看还是两门课",
+                user,
+                "session-7b",
+                db,
+                mock_client,
+            )
+
+            await generator.__anext__()
+            event = await generator.asend("就是机器人程序动化和机器人流程自动化")
+            while True:
+                if event["type"] == "ask_user":
+                    event = await generator.asend("确认")
+                    continue
+                try:
+                    event = await generator.__anext__()
+                except StopAsyncIteration:
+                    break
+
+            result = await db.execute(
+                select(Course)
+                .where(Course.user_id == "u7b")
+                .order_by(Course.week_pattern, Course.name)
+            )
+            remaining_courses = list(result.scalars().all())
+            assert [(course.name, course.week_pattern) for course in remaining_courses] == [
+                ("机器人流程自动化", "even"),
+                ("机器人流程自动化", "odd"),
+            ]
 
 
 @pytest.mark.asyncio

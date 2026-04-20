@@ -5,7 +5,7 @@ TOOL_DEFINITIONS: list[dict] = [
         "type": "function",
         "function": {
             "name": "list_courses",
-            "description": "List all courses for the current user.",
+            "description": "List all courses for the current user. Use this to inspect the current timetable before updating, deleting, correcting, or merging existing courses.",
             "parameters": {"type": "object", "properties": {}, "required": []},
         },
     },
@@ -38,6 +38,13 @@ TOOL_DEFINITIONS: list[dict] = [
                     },
                     "week_start": {"type": "integer", "description": "First active week", "default": 1},
                     "week_end": {"type": "integer", "description": "Last active week", "default": 16},
+                    "week_pattern": {
+                        "type": "string",
+                        "description": "Week recurrence pattern",
+                        "enum": ["all", "odd", "even"],
+                        "default": "all",
+                    },
+                    "week_text": {"type": "string", "description": "Human-readable week range"},
                 },
                 "required": ["name", "weekday", "start_time", "end_time"],
             },
@@ -46,8 +53,49 @@ TOOL_DEFINITIONS: list[dict] = [
     {
         "type": "function",
         "function": {
+            "name": "update_course",
+            "description": "Update one existing course by course ID. Use this to rename or correct imported/OCR course records that already exist in the timetable.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "course_id": {"type": "string", "description": "Course ID"},
+                    "name": {"type": "string", "description": "Course name"},
+                    "teacher": {"type": "string", "description": "Teacher name"},
+                    "location": {"type": "string", "description": "Course location"},
+                    "weekday": {
+                        "type": "integer",
+                        "description": "Weekday of the course, 1 for Monday through 7 for Sunday",
+                        "minimum": 1,
+                        "maximum": 7,
+                    },
+                    "start_time": {
+                        "type": "string",
+                        "description": "Course start time in HH:MM format",
+                        "pattern": "^\\d{2}:\\d{2}$",
+                    },
+                    "end_time": {
+                        "type": "string",
+                        "description": "Course end time in HH:MM format",
+                        "pattern": "^\\d{2}:\\d{2}$",
+                    },
+                    "week_start": {"type": "integer", "description": "First active week"},
+                    "week_end": {"type": "integer", "description": "Last active week"},
+                    "week_pattern": {
+                        "type": "string",
+                        "description": "Week recurrence pattern",
+                        "enum": ["all", "odd", "even"],
+                    },
+                    "week_text": {"type": "string", "description": "Human-readable week range"},
+                },
+                "required": ["course_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "delete_course",
-            "description": "Delete one course by course ID.",
+            "description": "Delete one course by course ID. Use this after confirmation when removing a duplicate or mistaken existing course.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -246,7 +294,7 @@ TOOL_DEFINITIONS: list[dict] = [
         "type": "function",
         "function": {
             "name": "save_period_times",
-            "description": "Save user confirmed period-time mapping for a parsed schedule upload.",
+            "description": "Save follow-up info for a parsed schedule upload, including period-time mapping and semester meta.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -261,18 +309,27 @@ TOOL_DEFINITIONS: list[dict] = [
                     },
                     "entries": {
                         "type": "array",
-                        "description": "Period-time pairs",
+                        "description": "Period-time pairs (optional if no missing periods)",
                         "items": {
                             "type": "object",
                             "properties": {
-                                "period": {"type": "string", "description": "例如 1-2"},
+                                "period": {"type": "string", "description": "e.g. 1-2"},
                                 "time": {"type": "string", "description": "HH:MM-HH:MM"},
                             },
                             "required": ["period", "time"],
                         },
                     },
+                    "semester_start_date": {
+                        "type": "string",
+                        "description": "Semester start date in YYYY-MM-DD format",
+                    },
+                    "term_total_weeks": {
+                        "type": "integer",
+                        "description": "Total teaching weeks in this semester, e.g. 16/18/20",
+                        "minimum": 1,
+                    },
                 },
-                "required": ["file_id", "entries"],
+                "required": ["file_id"],
             },
         },
     },
@@ -298,6 +355,15 @@ TOOL_DEFINITIONS: list[dict] = [
                                 "end_time": {"type": "string", "description": "End time HH:MM"},
                                 "week_start": {"type": "integer", "description": "Start week"},
                                 "week_end": {"type": "integer", "description": "End week"},
+                                "week_pattern": {
+                                    "type": "string",
+                                    "description": "Week recurrence pattern",
+                                    "enum": ["all", "odd", "even"],
+                                },
+                                "week_text": {
+                                    "type": "string",
+                                    "description": "Human-readable week range",
+                                },
                             },
                             "required": ["name", "weekday", "start_time", "end_time"],
                         },

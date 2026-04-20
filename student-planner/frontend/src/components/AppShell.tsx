@@ -1,7 +1,15 @@
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 
 import { useCalendarStore } from '../stores/calendarStore'
-import { CalendarIcon, ChatIcon, ChevronLeftIcon, PlusIcon, TaskIcon, UserIcon } from './icons'
+import {
+  CalendarIcon,
+  ChatIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  PlusIcon,
+  TaskIcon,
+  UserIcon,
+} from './icons'
 
 const tabs = [
   { path: '/chat', label: '聊天', icon: ChatIcon },
@@ -42,10 +50,15 @@ export function AppShell() {
   const currentDate = useCalendarStore((state) => state.currentDate)
   const calendarViewMode = useCalendarStore((state) => state.viewMode)
   const setCalendarViewMode = useCalendarStore((state) => state.setViewMode)
+  const shiftDate = useCalendarStore((state) => state.shiftDate)
+  const shiftMonth = useCalendarStore((state) => state.shiftMonth)
   const isSubPage = location.pathname.startsWith('/me/')
   const isCalendarRoute = location.pathname === '/calendar'
   const canOpenTaskSheet = isCalendarRoute && calendarViewMode === 'day'
   const calendarToggleLabel = calendarViewMode === 'month' ? '日视图' : '月视图'
+  const previousLabel = calendarViewMode === 'month' ? '上个月' : '上一天'
+  const nextLabel = calendarViewMode === 'month' ? '下个月' : '下一天'
+  const title = pageTitle(location.pathname, currentDate)
 
   function openCalendarTaskSheet() {
     window.dispatchEvent(new Event('calendar:add-task'))
@@ -63,6 +76,14 @@ export function AppShell() {
     setCalendarViewMode(calendarViewMode === 'month' ? 'day' : 'month')
   }
 
+  function shiftCalendar(step: number) {
+    if (calendarViewMode === 'month') {
+      shiftMonth(step)
+      return
+    }
+    shiftDate(step)
+  }
+
   return (
     <div className="app-frame">
       <header className="top-bar">
@@ -78,7 +99,19 @@ export function AppShell() {
         ) : (
           <span />
         )}
-        <div className="top-bar__title">{pageTitle(location.pathname, currentDate)}</div>
+        {isCalendarRoute ? (
+          <div className="top-bar__title top-bar__calendar-title">
+            <button className="top-bar__nav" type="button" aria-label={previousLabel} onClick={() => shiftCalendar(-1)}>
+              <ChevronLeftIcon className="icon" />
+            </button>
+            <span>{title}</span>
+            <button className="top-bar__nav" type="button" aria-label={nextLabel} onClick={() => shiftCalendar(1)}>
+              <ChevronRightIcon className="icon" />
+            </button>
+          </div>
+        ) : (
+          <div className="top-bar__title">{title}</div>
+        )}
         {canOpenTaskSheet ? (
           <button className="top-bar__action" type="button" aria-label="添加任务" onClick={openCalendarTaskSheet}>
             <PlusIcon className="icon icon--plus" />
