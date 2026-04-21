@@ -88,7 +88,7 @@ Expected:
 - 暂定 owner：
 ```
 
-- [ ] **Step 4: 提交文档与基线快照**
+- [x] **Step 4: 提交文档与基线快照**
 
 ```bash
 git add docs/superpowers/plans/2026-04-21-plan8-mobile-beta-stabilization.md progress.md bugs.md
@@ -109,7 +109,7 @@ git commit -m "docs: activate plan 8 mobile beta stabilization"
 - Modify: `student-planner/app/routers/chat.py`
 - Modify: `student-planner/tests/test_chat_ws.py`
 
-- [ ] **Step 1: 先起一套手机可访问的本地环境，再决定是否需要临时公网环境**
+- [x] **Step 1: 先起一套手机可访问的本地环境，再决定是否需要临时公网环境**
 
 Run from `D:\student_time_plan\student-planner`:
 
@@ -123,7 +123,7 @@ Run from `D:\student_time_plan`:
 npm --prefix student-planner/frontend run dev -- --host 0.0.0.0 --port 5173
 ```
 
-- [ ] **Step 2: 在手机上验证最小可达性：`/health`、`/chat`、发送一条普通消息**
+- [x] **Step 2: 在手机上验证最小可达性：`/health`、`/chat`、发送一条普通消息**
 
 手机检查项：
 
@@ -131,7 +131,7 @@ npm --prefix student-planner/frontend run dev -- --host 0.0.0.0 --port 5173
 2. 打开 `http://<LAN-IP>:5173/chat`，确认页面可加载。
 3. 登录后发送一条“测试消息”，确认能走通 WebSocket 收发。
 
-- [ ] **Step 3: 如果访问链路失败，先写最窄的失败回归，再改代码**
+- [x] **Step 3: 如果访问链路失败，先写最窄的失败回归，再改代码**
 
 优先级：
 
@@ -157,7 +157,7 @@ def test_chat_websocket_keeps_the_session_open_until_first_real_reply(client) ->
     # assert the socket does not drop before the first follow-up event
 ```
 
-- [ ] **Step 4: 实现最小修复，优先修访问链路，不改业务协议**
+- [x] **Step 4: 实现最小修复，优先修访问链路，不改业务协议**
 
 约束：
 
@@ -165,7 +165,7 @@ def test_chat_websocket_keeps_the_session_open_until_first_real_reply(client) ->
 - 不顺手改聊天交互和视觉细节。
 - 不引入新的部署抽象层。
 
-- [ ] **Step 5: 回归并复测手机访问链路**
+- [x] **Step 5: 回归并复测手机访问链路**
 
 Run:
 
@@ -176,7 +176,7 @@ py -3.12 -m pytest tests/test_chat_ws.py -v
 
 然后在手机上重做 Step 2 的 3 项检查。
 
-- [ ] **Step 6: 更新 `bugs.md` 与 `progress.md`，明确接下来进入 PWA 安装验收**
+- [x] **Step 6: 更新 `bugs.md` 与 `progress.md`，明确接下来进入 PWA 安装验收**
 
 ```bash
 git add progress.md bugs.md student-planner/frontend/vite.config.ts student-planner/frontend/src/api/client.ts student-planner/frontend/src/api/client.test.ts student-planner/frontend/src/pages/ChatPage.tsx student-planner/app/main.py student-planner/app/config.py student-planner/app/routers/chat.py student-planner/tests/test_chat_ws.py
@@ -193,7 +193,7 @@ git commit -m "fix: unblock mobile access path"
 - Modify: `student-planner/frontend/src/main.tsx`
 - Modify: `student-planner/frontend/public/pwa.svg`
 
-- [ ] **Step 1: 用 production build + preview 验收 PWA，而不是只看 dev server**
+- [x] **Step 1: 用 production build + preview 验收 PWA，而不是只看 dev server**
 
 Run from `D:\student_time_plan`:
 
