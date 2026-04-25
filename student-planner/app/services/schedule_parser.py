@@ -347,6 +347,7 @@ def _looks_like_period_cell(text: str) -> bool:
 
 
 def _parse_cell(text: str, weekday: int, period: str) -> list[RawCourse]:
+    text = text.replace("\\n", "\n")
     raw_blocks = [block.strip() for block in re.split(r"\n\s*\n+", text) if block.strip()]
     blocks = _merge_fragmented_blocks(raw_blocks)
     if not blocks:
@@ -363,13 +364,15 @@ def _parse_cell(text: str, weekday: int, period: str) -> list[RawCourse]:
         location: str | None = None
         week_start = 1
         week_end = 16
+        week_pattern = "all"
+        week_text: str | None = None
         resolved_period = period
 
         week_line_idx: int | None = None
         for idx, line in enumerate(lines[1:], start=1):
-            parsed_week = _parse_week_range(line)
+            parsed_week = _parse_week_info(line)
             if parsed_week is not None:
-                week_start, week_end = parsed_week
+                week_start, week_end, week_pattern, week_text = parsed_week
                 week_line_idx = idx
                 parsed_period = _parse_period_from_text(line)
                 if parsed_period is not None:
@@ -400,6 +403,8 @@ def _parse_cell(text: str, weekday: int, period: str) -> list[RawCourse]:
                 period=resolved_period,
                 week_start=week_start,
                 week_end=week_end,
+                week_pattern=week_pattern,
+                week_text=week_text or _build_week_text(week_start, week_end, week_pattern),
             )
         )
 
@@ -428,7 +433,7 @@ def _should_merge_with_previous_block(previous_lines: list[str], current_lines: 
     if not previous_lines or not current_lines:
         return False
 
-    if any(_parse_week_range(line) is not None for line in previous_lines):
+    if any(_parse_week_info(line) is not None for line in previous_lines):
         return False
 
     if len(previous_lines) != 1:
@@ -436,7 +441,7 @@ def _should_merge_with_previous_block(previous_lines: list[str], current_lines: 
 
     first_current_line = current_lines[0]
     continuation_hint = (
-        _parse_week_range(first_current_line) is not None
+        _parse_week_info(first_current_line) is not None
         or bool(_TEACHER_RE.search(first_current_line))
         or _looks_like_location(first_current_line)
         or bool(re.search(r"(场|馆|中心|校区|机房)$", first_current_line))
@@ -444,33 +449,94 @@ def _should_merge_with_previous_block(previous_lines: list[str], current_lines: 
     return continuation_hint
 
 
-def _parse_week_range(text: str) -> tuple[int, int] | None:
-    week_match = _WEEK_RANGE_RE.search(text)
+def _build_week_text(week_start: int, week_end: int, week_pattern: str) -> str:
+    if week_pattern == "odd":
+        return f"第{week_start}-{week_end}周(单周)"
+    if week_pattern == "even":
+        return f"第{week_start}-{week_end}周(双周)"
+    return f"第{week_start}-{week_end}周"
+
+
+def _normalize_week_source(text: str) -> str:
+    return (
+        text.replace("鍗曞懆", "单周")
+        .replace("鍙屽懆", "双周")
+        .replace("odd week", "odd")
+        .replace("even week", "even")
+    )
+
+
+def _looks_like_week_line(text: str) -> bool:
+    lowered = text.lower()
+    if any(marker in text for marker in ("周", "单周", "双周", "第", "鍛", "鍗曞懆", "鍙屽懆")):
+        return True
+    if any(marker in lowered for marker in ("week", "odd", "even")):
+        return True
+    if re.search(r"\d{1,2}:\d{2}", text):
+        return False
+    stripped = text.strip()
+    return bool(stripped) and re.fullmatch(r"[^A-Za-z]*\d{1,2}(?:\s*[-~～—–]\s*\d{1,2})?[^A-Za-z]*", stripped) is not None
+
+
+def _parse_week_info(text: str) -> tuple[int, int, str, str] | None:
+    source = _normalize_week_source(text)
+
+    week_match = _WEEK_RANGE_RE.search(source)
     if week_match:
-        return int(week_match.group(1)), int(week_match.group(2))
+        week_start = int(week_match.group(1))
+        week_end = int(week_match.group(2))
+    else:
+        expr_match = _WEEK_EXPR_RE.search(source)
+        numbers: list[int] = []
+        if expr_match is not None:
+            expr = expr_match.group(1).replace("，", ",")
+            for token in [part.strip() for part in expr.split(",") if part.strip()]:
+                range_match = re.match(r"^(\d+)\s*[-~～—–]\s*(\d+)$", token)
+                if range_match:
+                    start = int(range_match.group(1))
+                    end = int(range_match.group(2))
+                    if start <= end:
+                        numbers.extend(range(start, end + 1))
+                    else:
+                        numbers.extend(range(end, start + 1))
+                    continue
+                if token.isdigit():
+                    numbers.append(int(token))
 
-    expr_match = _WEEK_EXPR_RE.search(text)
-    if expr_match is None:
-        return None
-
-    expr = expr_match.group(1).replace("，", ",")
-    numbers: list[int] = []
-    for token in [part.strip() for part in expr.split(",") if part.strip()]:
-        range_match = re.match(r"^(\d+)\s*[-~～—–]\s*(\d+)$", token)
-        if range_match:
-            start = int(range_match.group(1))
-            end = int(range_match.group(2))
-            if start <= end:
-                numbers.extend(range(start, end + 1))
+        if not numbers and _looks_like_week_line(source):
+            fallback_range_match = re.search(r"(?<!\d)(\d{1,2})\s*[-~～—–]\s*(\d{1,2})(?!\d)", source)
+            if fallback_range_match:
+                numbers.extend((int(fallback_range_match.group(1)), int(fallback_range_match.group(2))))
             else:
-                numbers.extend(range(end, start + 1))
-            continue
-        if token.isdigit():
-            numbers.append(int(token))
+                standalone_numbers = re.findall(r"\d{1,2}", source)
+                if len(standalone_numbers) == 1:
+                    numbers.append(int(standalone_numbers[0]))
 
-    if not numbers:
+        if not numbers:
+            return None
+        week_start = min(numbers)
+        week_end = max(numbers)
+
+    if week_start > week_end:
+        week_start, week_end = week_end, week_start
+
+    lowered = source.lower()
+    if "单周" in source or "奇数周" in source or "鍗曞懆" in text or "odd" in lowered:
+        week_pattern = "odd"
+    elif "双周" in source or "偶数周" in source or "鍙屽懆" in text or "even" in lowered:
+        week_pattern = "even"
+    else:
+        week_pattern = "all"
+
+    return week_start, week_end, week_pattern, text.strip() or _build_week_text(week_start, week_end, week_pattern)
+
+
+def _parse_week_range(text: str) -> tuple[int, int] | None:
+    parsed = _parse_week_info(text)
+    if parsed is None:
         return None
-    return min(numbers), max(numbers)
+    week_start, week_end, _, _ = parsed
+    return week_start, week_end
 
 
 def _parse_period_from_text(text: str) -> str | None:
@@ -487,7 +553,7 @@ def _parse_period_from_text(text: str) -> str | None:
 def _looks_like_teacher(line: str, idx: int) -> bool:
     if idx != 1:
         return False
-    if _parse_week_range(line) is not None:
+    if _parse_week_info(line) is not None:
         return False
     if _looks_like_location(line):
         return False
@@ -507,7 +573,17 @@ def _deduplicate_courses(courses: list[RawCourse]) -> list[RawCourse]:
     seen: set[tuple[object, ...]] = set()
     deduped: list[RawCourse] = []
     for c in courses:
-        key = (c.name, c.teacher, c.location, c.weekday, c.period, c.week_start, c.week_end)
+        key = (
+            c.name,
+            c.teacher,
+            c.location,
+            c.weekday,
+            c.period,
+            c.week_start,
+            c.week_end,
+            c.week_pattern,
+            c.week_text,
+        )
         if key in seen:
             continue
         seen.add(key)

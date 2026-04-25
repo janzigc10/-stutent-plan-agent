@@ -544,6 +544,8 @@ def _period_schedule_from_preferences(
     if isinstance(schedule, dict):
         return schedule
     return {}
+
+
 def _term_total_weeks_from_preferences(
     preferences: dict[str, Any] | None,
     term_id: str = "default",
@@ -560,11 +562,15 @@ def _term_total_weeks_from_preferences(
         if isinstance(value, int) and value > 0:
             return value
     return None
+
+
 def _set_term_total_weeks(preferences: dict[str, Any], term_id: str, total_weeks: int) -> None:
     templates = dict(preferences.get("term_total_weeks_templates") or {})
     templates[term_id] = total_weeks
     preferences["term_total_weeks_templates"] = templates
     preferences["current_term_total_weeks"] = total_weeks
+
+
 def _normalize_course_weeks(course_data: dict[str, Any], total_weeks: int) -> None:
     try:
         start = int(course_data.get("week_start", 1))
@@ -590,6 +596,8 @@ def _normalize_course_weeks(course_data: dict[str, Any], total_weeks: int) -> No
         course_data["week_text"] = f"\u7b2c{start}-{end}\u5468(\u53cc\u5468)"
     else:
         course_data["week_text"] = f"\u7b2c{start}-{end}\u5468"
+
+
 async def _save_period_times(
     db: AsyncSession,
     user_id: str,
@@ -626,6 +634,9 @@ async def _save_period_times(
     if user is None:
         return {"error": "User not found"}
     preferences = dict(user.preferences or {})
+    existing_schedule = dict(_period_schedule_from_preferences(preferences, term_id=term_id))
+    resolved_schedule = dict(existing_schedule)
+    resolved_schedule.update(period_map)
     existing_term_total_weeks = _term_total_weeks_from_preferences(preferences, term_id=term_id)
     resolved_term_total_weeks = term_total_weeks if term_total_weeks is not None else existing_term_total_weeks
     resolved_semester_start = user.current_semester_start
@@ -641,20 +652,12 @@ async def _save_period_times(
         missing_semester_fields.append("semester_start_date")
     if resolved_term_total_weeks is None:
         missing_semester_fields.append("term_total_weeks")
-    still_missing = [period for period in required_periods if period not in period_map]
-    if still_missing or missing_semester_fields:
-        return {
-            "status": "need_period_times",
-            "file_id": file_id,
-            "missing_periods": still_missing,
-            "missing_semester_fields": missing_semester_fields,
-            "message": "\u4ecd\u6709\u4fe1\u606f\u672a\u8865\u5168\uff0c\u8bf7\u7ee7\u7eed\u8865\u5145\u3002",
-        }
+    still_missing = [period for period in required_periods if period not in resolved_schedule]
     templates = dict(preferences.get("period_schedule_templates") or {})
-    term_schedule = dict(templates.get(term_id) or {})
-    term_schedule.update(period_map)
-    templates[term_id] = term_schedule
+    templates[term_id] = resolved_schedule
     preferences["period_schedule_templates"] = templates
+    if term_id == "default":
+        preferences["period_schedule"] = resolved_schedule
     if resolved_term_total_weeks is not None:
         _set_term_total_weeks(preferences, term_id, resolved_term_total_weeks)
     user.preferences = preferences
@@ -668,21 +671,38 @@ async def _save_period_times(
                 period = normalize_period(raw_period)
             except ValueError:
                 period = raw_period.strip()
-            times = convert_periods(period, term_schedule) if period else None
+            times = convert_periods(period, resolved_schedule) if period else None
             if times is not None:
                 course_data.update(times)
         if resolved_term_total_weeks is not None:
             _normalize_course_weeks(course_data, resolved_term_total_weeks)
         updated_courses.append(course_data)
+    next_status = "READY"
+    next_missing_periods: list[str] = []
+    next_missing_semester_fields: list[str] = []
+    if still_missing or missing_semester_fields:
+        next_status = "NEED_PERIOD_TIMES"
+        next_missing_periods = still_missing
+        next_missing_semester_fields = missing_semester_fields
+
     update_schedule_upload_state(
         user_id,
         file_id,
-        status="READY",
-        missing_periods=[],
-        missing_semester_fields=[],
+        status=next_status,
+        missing_periods=next_missing_periods,
+        missing_semester_fields=next_missing_semester_fields,
         courses=updated_courses,
     )
     await db.commit()
+    if still_missing or missing_semester_fields:
+        return {
+            "status": "need_period_times",
+            "file_id": file_id,
+            "courses": updated_courses,
+            "missing_periods": still_missing,
+            "missing_semester_fields": missing_semester_fields,
+            "message": "\u4ecd\u6709\u4fe1\u606f\u672a\u8865\u5168\uff0c\u8bf7\u7ee7\u7eed\u8865\u5145\u3002",
+        }
     return {
         "status": "ready",
         "file_id": file_id,

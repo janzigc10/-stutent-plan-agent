@@ -21,6 +21,11 @@
 - 课表图片异步解析的前端进度展示尚未补齐，需要前端轮询或 WebSocket 进度消费。
 - Chat 在“确认后到下一次 `tool_call` 前”的轻量过渡方案尚未完成，目前保持稳定版“仅显示已选择”。
 
+## 近期确认的部署坑
+- 服务器部署目录必须包含 `student-planner/Agent.md`。如果 `/opt/student-planner/current/Agent.md` 缺失，后端在构造系统提示词时会抛 `FileNotFoundError`，前端聊天会显示“聊天暂时不可用，请稍后重试”。2026-04-23 已在临时 HTTPS 服务器补齐该文件，并用公网 WebSocket smoke 验证普通聊天恢复。
+- 2026-04-25 出现过“本地已修、线上仍复现旧课表导入问题”的部署回退：腾讯云测试机上的 `/opt/student-planner/current/app/agent/loop.py`、`tool_executor.py`、`services/schedule_parser.py` 哈希一度落后于本地工作树，导致真机仍会看到旧的补信息提问和错误周次结果。后续每次声称“已部署”前，都先比对这几份关键文件哈希并重启 `student-planner-backend`。
+
 ## 不要重复走的失败路径
 - 不要把 `AGENTS.md` 当成长期 session 流水账；历史过程应压缩为当前快照或单独归档。
 - 不要在未确认设计变更时直接改实现；先记录问题，再决定是否调整 spec / plan。
+- 不要把移动端/PWA 的附件入口继续做成“`button` 调 `ref.click()` + `display:none` 文件输入”的组合；2026-04-25 已确认这会导致真机上聊天页加号点击无反应。优先使用原生 `label[for=file-input]` 或其他保留原生文件选择交互链的实现。

@@ -1,4 +1,5 @@
 import json
+import re
 import uuid
 from typing import Any, AsyncGenerator
 
@@ -20,6 +21,8 @@ from app.models.agent_log import AgentLog
 from app.models.conversation_message import ConversationMessage
 from app.models.user import User
 from app.services.context_compressor import compress_conversation_history, compress_tool_result
+from app.services.period_converter import normalize_period
+from app.services.schedule_upload_cache import get_schedule_upload
 
 KNOWN_TOOLS = {tool["function"]["name"] for tool in TOOL_DEFINITIONS}
 MAX_ITERATIONS = 20
@@ -77,6 +80,17 @@ _COURSE_DISAMBIGUATION_KEYWORDS = (
     "确认一下具体",
 )
 
+_SCHEDULE_FILE_ID_RE = re.compile(r"file_id\s*=\s*([a-zA-Z0-9\-]+)")
+_SCHEDULE_PERIOD_ENTRY_RE = re.compile(
+    r"(?P<period>\d{1,2}\s*[-~～—–]\s*\d{1,2})\s*(?:节|节次)?\s*[:：]?\s*"
+    r"(?P<start>(?:[01]?\d|2[0-3]):[0-5]\d)\s*[-~～—–]\s*"
+    r"(?P<end>(?:[01]?\d|2[0-3]):[0-5]\d)"
+)
+_SEMESTER_START_RE = re.compile(r"\b(20\d{2}-\d{2}-\d{2})\b")
+_TERM_TOTAL_WEEKS_RE = re.compile(
+    r"(?:学期(?:总)?周数|总周数|这学期(?:一共|共)?|本学期(?:一共|共)?|一共|共)\D{0,6}(\d{1,2})\s*周"
+)
+
 
 def _normalize_ask_type(result: dict[str, Any]) -> str:
     ask_type = result.get("type")
@@ -97,6 +111,25 @@ def _to_persisted_tool_summary(tool_name: str, tool_result_content: str) -> str:
     if tool_result_content.startswith("[TOOL_SUMMARY:"):
         return tool_result_content
     return f"[TOOL_SUMMARY:{tool_name}:v1] {tool_result_content}"
+
+
+async def _persist_local_tool_step(
+    db: AsyncSession,
+    session_id: str,
+    user_id: str,
+    step: int,
+    tool_name: str,
+    tool_args: dict[str, Any],
+    tool_result: dict[str, Any],
+) -> None:
+    await _save_message(
+        db,
+        session_id,
+        "assistant",
+        _to_persisted_tool_summary(tool_name, compress_tool_result(tool_name, tool_result)),
+        is_compressed=True,
+    )
+    await _log_step(db, user_id, session_id, step, tool_name, tool_args, tool_result)
 
 
 def _build_course_routing_hint(
@@ -276,6 +309,217 @@ def _is_confirmed_answer(answer: str) -> bool:
     positive_prefixes = ("确认", "好", "可以", "行", "是", "yes", "ok")
     return any(normalized.startswith(prefix) for prefix in positive_prefixes)
 
+def _extract_schedule_file_id(user_message: str) -> str | None:
+    match = _SCHEDULE_FILE_ID_RE.search(user_message or "")
+    if match is None:
+        return None
+    return match.group(1)
+
+
+def _should_handle_schedule_import_locally(user_message: str) -> bool:
+    return _extract_schedule_file_id(user_message) is not None
+
+
+def _schedule_parse_tool_name(user_message: str, user_id: str) -> str:
+    file_id = _extract_schedule_file_id(user_message)
+    if file_id:
+        cached = get_schedule_upload(user_id, file_id)
+        if cached is not None and cached.kind == "image":
+            return "parse_schedule_image"
+
+    compact_message = (user_message or "").strip().lower()
+    if any(marker in compact_message for marker in ("图片", "截图", "照片", "image")):
+        return "parse_schedule_image"
+    return "parse_schedule"
+
+
+def _build_schedule_missing_info_question(result: dict[str, Any], retry_hint: str | None = None) -> str:
+    missing_periods = [str(period) for period in result.get("missing_periods") or [] if str(period).strip()]
+    missing_semester_fields = {
+        str(field)
+        for field in result.get("missing_semester_fields") or []
+        if str(field).strip()
+    }
+
+    lines: list[str] = []
+    if retry_hint:
+        lines.append(retry_hint)
+
+    lines.append("请补充以下信息，我来帮你完成导入：")
+    if missing_periods:
+        joined_periods = "、".join(f"第{period}节" for period in missing_periods)
+        lines.append(f"节次时间：请按“1-2节 08:00-09:40”的格式补充这些节次：{joined_periods}")
+
+    if {"semester_start_date", "term_total_weeks"} <= missing_semester_fields:
+        lines.append("学期信息：请告诉我学期开始日期（如 2026-03-02）和这学期总周数（如 18 周）。")
+    elif "semester_start_date" in missing_semester_fields:
+        lines.append("学期信息：请告诉我学期开始日期（如 2026-03-02）。")
+    elif "term_total_weeks" in missing_semester_fields:
+        lines.append("学期信息：请告诉我这学期总周数（如 18 周）。")
+
+    return "\n".join(lines)
+
+
+def _extract_period_entries_from_answer(answer: str) -> list[dict[str, str]]:
+    entries: list[dict[str, str]] = []
+    seen_periods: set[str] = set()
+    for match in _SCHEDULE_PERIOD_ENTRY_RE.finditer(answer or ""):
+        try:
+            period = normalize_period(match.group("period"))
+        except ValueError:
+            continue
+        if period in seen_periods:
+            continue
+        seen_periods.add(period)
+        entries.append(
+            {
+                "period": period,
+                "time": f"{match.group('start')}-{match.group('end')}",
+            }
+        )
+    return entries
+
+
+def _extract_semester_start_date_from_answer(answer: str) -> str | None:
+    match = _SEMESTER_START_RE.search(answer or "")
+    if match is None:
+        return None
+    return match.group(1)
+
+
+def _extract_term_total_weeks_from_answer(answer: str) -> int | None:
+    text = answer or ""
+    match = _TERM_TOTAL_WEEKS_RE.search(text)
+    if match is None:
+        match = re.search(r"(\d{1,2})\s*周", text)
+    if match is None:
+        return None
+    return int(match.group(1))
+
+
+async def _run_schedule_import_shortcut(
+    user_message: str,
+    user: User,
+    session_id: str,
+    db: AsyncSession,
+) -> AsyncGenerator[dict[str, Any], str | None]:
+    file_id = _extract_schedule_file_id(user_message)
+    if not file_id:
+        message_id = str(uuid.uuid4())
+        text = "我没有识别到这次课表上传的 file_id，请重新上传后再试。"
+        yield {"type": "text", "message_id": message_id, "content": text}
+        await _save_message(db, session_id, "assistant", text)
+        yield {"type": "done"}
+        return
+
+    parse_tool_name = _schedule_parse_tool_name(user_message, user.id)
+    parse_args = {"file_id": file_id}
+    step = 1
+
+    yield {"type": "tool_call", "name": parse_tool_name, "args": parse_args}
+    parse_result = await execute_tool(parse_tool_name, parse_args, db, user.id)
+    yield {"type": "tool_result", "name": parse_tool_name, "result": parse_result}
+    await _persist_local_tool_step(db, session_id, user.id, step, parse_tool_name, parse_args, parse_result)
+
+    if "error" in parse_result:
+        message_id = str(uuid.uuid4())
+        text = str(parse_result.get("error") or "课表解析失败，请重新上传后再试。")
+        yield {"type": "text", "message_id": message_id, "content": text}
+        await _save_message(db, session_id, "assistant", text)
+        yield {"type": "done"}
+        return
+
+    status = str(parse_result.get("status") or "")
+    if status in {"processing", "failed"}:
+        message_id = str(uuid.uuid4())
+        text = str(parse_result.get("message") or parse_result.get("error") or "课表暂时还不能导入，请稍后重试。")
+        yield {"type": "text", "message_id": message_id, "content": text}
+        await _save_message(db, session_id, "assistant", text)
+        yield {"type": "done"}
+        return
+
+    current_result = parse_result
+    retry_hint: str | None = None
+
+    while str(current_result.get("status") or "") == "need_period_times":
+        answer = yield {
+            "type": "ask_user",
+            "ask_type": "review",
+            "question": _build_schedule_missing_info_question(current_result, retry_hint),
+            "options": [],
+            "data": None,
+        }
+        answer_text = str(answer or "").strip()
+        entries = _extract_period_entries_from_answer(answer_text)
+        semester_start_date = _extract_semester_start_date_from_answer(answer_text)
+        term_total_weeks = _extract_term_total_weeks_from_answer(answer_text)
+
+        if not entries and semester_start_date is None and term_total_weeks is None:
+            retry_hint = "我还没识别到有效的节次时间或学期信息，请按示例格式再发一次。"
+            continue
+
+        step += 1
+        save_args: dict[str, Any] = {"file_id": file_id}
+        if entries:
+            save_args["entries"] = entries
+        if semester_start_date is not None:
+            save_args["semester_start_date"] = semester_start_date
+        if term_total_weeks is not None:
+            save_args["term_total_weeks"] = term_total_weeks
+
+        yield {"type": "tool_call", "name": "save_period_times", "args": save_args}
+        save_result = await execute_tool("save_period_times", save_args, db, user.id)
+        yield {"type": "tool_result", "name": "save_period_times", "result": save_result}
+        await _persist_local_tool_step(db, session_id, user.id, step, "save_period_times", save_args, save_result)
+
+        if "error" in save_result:
+            retry_hint = str(save_result.get("error") or "补充信息保存失败，请按示例重新发送。")
+            continue
+
+        current_result = save_result
+        retry_hint = None
+
+    if str(current_result.get("status") or "") != "ready":
+        message_id = str(uuid.uuid4())
+        text = str(current_result.get("message") or "课表解析结果异常，请重新上传后再试。")
+        yield {"type": "text", "message_id": message_id, "content": text}
+        await _save_message(db, session_id, "assistant", text)
+        yield {"type": "done"}
+        return
+
+    courses = list(current_result.get("courses") or [])
+    confirm_answer = yield {
+        "type": "ask_user",
+        "ask_type": "review",
+        "question": f"以下是解析出的课表（共{len(courses)}条），请确认是否导入？",
+        "options": ["确认", "取消"],
+        "data": {"courses": courses, "count": len(courses)},
+    }
+    if not _is_confirmed_answer(str(confirm_answer or "")):
+        message_id = str(uuid.uuid4())
+        text = "好的，这次我先不导入。你后面想继续的话，重新确认一次就行。"
+        yield {"type": "text", "message_id": message_id, "content": text}
+        await _save_message(db, session_id, "assistant", text)
+        yield {"type": "done"}
+        return
+
+    step += 1
+    import_args = {"courses": courses}
+    yield {"type": "tool_call", "name": "bulk_import_courses", "args": import_args}
+    import_result = await execute_tool("bulk_import_courses", import_args, db, user.id)
+    yield {"type": "tool_result", "name": "bulk_import_courses", "result": import_result}
+    await _persist_local_tool_step(db, session_id, user.id, step, "bulk_import_courses", import_args, import_result)
+
+    message_id = str(uuid.uuid4())
+    if "error" in import_result:
+        text = str(import_result.get("error") or "课表导入失败，请稍后重试。")
+    else:
+        imported_count = int(import_result.get("count") or len(courses))
+        text = f"课表已导入完成，共 {imported_count} 条。"
+    yield {"type": "text", "message_id": message_id, "content": text}
+    await _save_message(db, session_id, "assistant", text)
+    yield {"type": "done"}
+
 
 async def _run_course_merge_shortcut(
     user_message: str,
@@ -426,6 +670,21 @@ async def run_agent_loop(
 
     messages.append({"role": "user", "content": user_message})
     await _save_message(db, session_id, "user", user_message)
+
+    if _should_handle_schedule_import_locally(user_message):
+        shortcut = _run_schedule_import_shortcut(user_message, user, session_id, db)
+        try:
+            event = await shortcut.__anext__()
+            while True:
+                if event["type"] == "ask_user":
+                    user_response = yield event
+                    event = await shortcut.asend(user_response)
+                else:
+                    yield event
+                    event = await shortcut.__anext__()
+        except StopAsyncIteration:
+            pass
+        return
 
     if _should_handle_course_merge_locally(user_message, history_messages):
         shortcut = _run_course_merge_shortcut(user_message, user, session_id, db, history_messages)
